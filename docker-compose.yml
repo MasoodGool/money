@@ -1,0 +1,47 @@
+# Local/dev compose. Phase 4 adds docker-compose.prod.yml for the GCP VM.
+#
+# Hard invariants embodied here:
+#   - freqtrade image is version-pinned (never `latest`)
+#   - freqtrade runs `trade` against config.dryrun.json (dry_run: true)
+#   - no public ports: the Concierge binds to 127.0.0.1 only
+
+services:
+  concierge:
+    build: ./concierge
+    container_name: concierge
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+    ports:
+      # Loopback-only so local curl can simulate webhooks; never 0.0.0.0.
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  freqtrade:
+    # Pinned release — bump deliberately, with changelog review (Phase 4 rule).
+    image: freqtradeorg/freqtrade:2025.12
+    container_name: freqtrade
+    restart: unless-stopped
+    depends_on:
+      concierge:
+        condition: service_healthy
+    volumes:
+      - ./bot/user_data:/freqtrade/user_data
+    command: >
+      trade
+      --config /freqtrade/user_data/config/config.dryrun.json
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,27 @@
+{
+  "name": "concierge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Signal concierge: receives freqtrade webhooks, will own risk sizing and Telegram tickets (Phase 2+). Phase 0: payload logging only.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

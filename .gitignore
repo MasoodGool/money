@@ -1,0 +1,31 @@
+# Secrets — never commit real credentials
+.env
+
+# Freqtrade market data, bot state, notebooks output
+bot/user_data/data/*
+!bot/user_data/data/.gitkeep
+bot/user_data/db/*
+!bot/user_data/db/.gitkeep
+bot/user_data/logs/
+bot/user_data/backtest_results/
+bot/user_data/hyperopt_results/
+bot/user_data/plot/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node / TypeScript
+node_modules/
+concierge/dist/
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

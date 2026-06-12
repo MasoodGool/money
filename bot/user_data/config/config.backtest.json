@@ -1,0 +1,57 @@
+{
+    // Backtest/download-data config: same market universe as dry-run,
+    // with webhook/telegram stripped so offline runs have no side effects.
+    //
+    // Backtesting discipline (Phase 1):
+    //   - fees are passed explicitly by scripts/backtest.sh (--fee 0.001,
+    //     Binance spot taker per side)
+    //   - in-sample 2024-01 -> 2025-06 for tuning; out-of-sample 2025-07 ->
+    //     is touched ONCE per strategy version
+    "dry_run": true,
+    "dry_run_wallet": 1000,
+
+    "strategy": "NoopScaffold",
+
+    "trading_mode": "spot",
+    "margin_mode": "",
+    "max_open_trades": 3,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 0.99,
+
+    "dataformat_ohlcv": "feather",
+
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+
+    "exchange": {
+        "name": "binance",
+        "key": "",
+        "secret": "",
+        "ccxt_config": {},
+        "ccxt_async_config": {},
+        "pair_whitelist": [
+            "BTC/USDT",
+            "ETH/USDT",
+            "SOL/USDT"
+        ],
+        "pair_blacklist": []
+    },
+
+    "pairlists": [
+        {"method": "StaticPairList"}
+    ]
+}
