@@ -44,4 +44,9 @@ export interface ExecutionVenue {
   placeOcoSell(symbol: string, amount: number, bracket: OcoBracket): Promise<OrderReceipt>;
   /** Cancel a previously placed order/order-list by id. */
   cancelOrder(symbol: string, id: string): Promise<void>;
+  /**
+   * True if the order/order-list is still open (resting). Used on boot to
+   * detect positions whose protective bracket resolved while we were down.
+   */
+  isOrderOpen(symbol: string, id: string): Promise<boolean>;
 }

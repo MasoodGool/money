@@ -29,3 +29,4 @@ concierge/dist/
 .vscode/
 .idea/
 .DS_Store
+concierge-state.sqlite

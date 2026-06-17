@@ -42,6 +42,8 @@ export interface ConciergeConfig {
   telegramBotToken: string;
   /** Telegram chat id alerts are sent to. */
   telegramChatId: string;
+  /** Path to the SQLite file holding durable executor state. */
+  stateDbPath: string;
   risk: RiskConfig;
 }
 
@@ -72,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConciergeConfi
     killSwitch: bool("KILL_SWITCH", true),
     telegramBotToken: env["TELEGRAM_BOT_TOKEN"] ?? "",
     telegramChatId: env["TELEGRAM_CHAT_ID"] ?? "",
+    stateDbPath: env["STATE_DB_PATH"] ?? "concierge-state.sqlite",
     risk: {
       equity: num("RISK_EQUITY", 1000),
       riskPerTrade: num("RISK_PER_TRADE", 0.01),

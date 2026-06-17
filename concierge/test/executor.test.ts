@@ -56,6 +56,10 @@ class FakeVenue implements ExecutionVenue {
   async cancelOrder(_s: string, id: string): Promise<void> {
     this.cancels.push(id);
   }
+  openOrderIds = new Set<string>();
+  async isOrderOpen(_s: string, id: string): Promise<boolean> {
+    return this.openOrderIds.has(id);
+  }
 }
 
 function makeNotifier(): Notifier & { messages: string[] } {

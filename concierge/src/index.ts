@@ -3,6 +3,7 @@ import { CcxtBinanceVenue } from "./binance-venue.js";
 import { loadConfig } from "./config.js";
 import { Executor } from "./executor.js";
 import { LogNotifier, type Notifier } from "./notifier.js";
+import { SqliteStore } from "./sqlite-store.js";
 import { TelegramNotifier } from "./telegram.js";
 
 const config = loadConfig();
@@ -20,11 +21,14 @@ const notifier: Notifier = telegramConfigured
   ? new TelegramNotifier({ botToken: config.telegramBotToken, chatId: config.telegramChatId })
   : new LogNotifier();
 
+const store = new SqliteStore(config.stateDbPath);
+
 const executor = new Executor({
   venue,
   notifier,
   risk: config.risk,
   killSwitch: config.killSwitch,
+  store,
 });
 
 const app = buildApp({ executor });
@@ -52,10 +56,23 @@ app.log.warn(
 
 // 0.0.0.0 is container-internal only; compose maps it to 127.0.0.1 on the
 // host. No public ports — Hard Invariant 6.
-app.listen({ port: config.port, host: "0.0.0.0" }).catch((err) => {
-  app.log.error(err, "concierge failed to start");
-  process.exit(1);
-});
+app
+  .listen({ port: config.port, host: "0.0.0.0" })
+  .then(async () => {
+    // Square persisted positions against the exchange before taking signals,
+    // unless armed-off (no creds / kill switch may mean no venue access).
+    if (!config.killSwitch) {
+      try {
+        await executor.reconcileOnBoot();
+      } catch (err) {
+        app.log.error(err, "boot reconciliation failed");
+      }
+    }
+  })
+  .catch((err) => {
+    app.log.error(err, "concierge failed to start");
+    process.exit(1);
+  });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {

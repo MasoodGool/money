@@ -126,4 +126,12 @@ export class CcxtBinanceVenue implements ExecutionVenue {
       await this.exchange.cancelOrder(id, symbol);
     }
   }
+
+  async isOrderOpen(symbol: string, id: string): Promise<boolean> {
+    await this.ensureMarkets();
+    // If the id appears among open orders it's still resting. Anything else
+    // (filled, cancelled, unknown) counts as not-open for reconciliation.
+    const open = await this.exchange.fetchOpenOrders(symbol);
+    return open.some((o) => String(o.id) === id || String(o.info?.orderListId) === id);
+  }
 }

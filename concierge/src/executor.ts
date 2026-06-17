@@ -10,12 +10,19 @@
  *   5. exchange filters    — step-size rounding + min-notional check
  * Only then: market buy, followed by a resting OCO stop/TP bracket so the
  * position is protected even if this process dies.
+ *
+ * All mutable state (positions, daily tally, idempotency, equity, kill
+ * switch) is written through to a StateStore so a restart resumes cleanly;
+ * reconcileOnBoot() then squares persisted positions against the exchange.
  */
 
 import type { RiskConfig } from "./config.js";
 import type { Notifier } from "./notifier.js";
 import { computeBracket, computePositionSize } from "./risk.js";
+import { InMemoryStore, type OpenPosition, type StateStore } from "./store.js";
 import type { ExecutionVenue } from "./venue.js";
+
+export type { OpenPosition } from "./store.js";
 
 /** Normalised view of the freqtrade webhook payload the executor needs. */
 export interface SignalInput {
@@ -24,15 +31,6 @@ export interface SignalInput {
   pair: string;
   /** Entry price for entries; exit price for exits. */
   rate: number;
-}
-
-export interface OpenPosition {
-  tradeId: string;
-  symbol: string;
-  amount: number;
-  entryPrice: number;
-  stopPrice: number;
-  ocoOrderId: string | undefined;
 }
 
 export type EntryOutcome =
@@ -49,6 +47,8 @@ export interface ExecutorDeps {
   risk: RiskConfig;
   /** Master cut-off. When true, no orders are placed. */
   killSwitch: boolean;
+  /** Durable state; defaults to in-memory (tests / no-persistence runs). */
+  store?: StateStore;
   /** Clock injection for deterministic daily-reset tests. */
   now?: () => Date;
 }
@@ -64,32 +64,62 @@ export class Executor {
   private readonly venue: ExecutionVenue;
   private readonly notifier: Notifier;
   private readonly risk: RiskConfig;
+  private readonly store: StateStore;
   private readonly now: () => Date;
 
+  // In-memory working copy, loaded from and written through to the store.
   private killSwitch: boolean;
   private equity: number;
-  private dailyLossQuote = 0;
+  private dailyLossQuote: number;
   private dailyKey: string;
   private readonly positions = new Map<string, OpenPosition>();
-  /** trade_ids we have already acted on, for idempotent webhook delivery. */
-  private readonly handledEntries = new Set<string>();
 
   constructor(deps: ExecutorDeps) {
     this.venue = deps.venue;
     this.notifier = deps.notifier;
     this.risk = deps.risk;
-    this.killSwitch = deps.killSwitch;
+    this.store = deps.store ?? new InMemoryStore();
     this.now = deps.now ?? (() => new Date());
-    this.equity = deps.risk.equity;
-    this.dailyKey = sastDayKey(this.now());
+
+    // Persisted settings win over config defaults so runtime changes survive
+    // a restart; otherwise seed the store from config.
+    const ks = this.store.getSetting("kill_switch");
+    this.killSwitch = ks !== undefined ? ks === "1" : deps.killSwitch;
+    this.store.setSetting("kill_switch", this.killSwitch ? "1" : "0");
+
+    const eq = this.store.getSetting("equity");
+    this.equity = eq !== undefined ? Number(eq) : deps.risk.equity;
+    this.store.setSetting("equity", String(this.equity));
+
+    const daily = this.store.getDaily();
+    if (daily) {
+      this.dailyKey = daily.dayKey;
+      this.dailyLossQuote = daily.lossQuote;
+    } else {
+      this.dailyKey = sastDayKey(this.now());
+      this.dailyLossQuote = 0;
+      this.store.setDaily({ dayKey: this.dailyKey, lossQuote: 0 });
+    }
+
+    for (const p of this.store.loadPositions()) this.positions.set(p.tradeId, p);
   }
 
   setKillSwitch(on: boolean): void {
     this.killSwitch = on;
+    this.store.setSetting("kill_switch", on ? "1" : "0");
+  }
+
+  isKillSwitchOn(): boolean {
+    return this.killSwitch;
   }
 
   setEquity(equity: number): void {
     this.equity = equity;
+    this.store.setSetting("equity", String(equity));
+  }
+
+  getEquity(): number {
+    return this.equity;
   }
 
   getOpenPositions(): OpenPosition[] {
@@ -107,6 +137,53 @@ export class Executor {
     if (key !== this.dailyKey) {
       this.dailyKey = key;
       this.dailyLossQuote = 0;
+      this.store.setDaily({ dayKey: key, lossQuote: 0 });
+    }
+  }
+
+  private addDailyLoss(amount: number): void {
+    this.rollDailyWindow();
+    this.dailyLossQuote += amount;
+    this.store.setDaily({ dayKey: this.dailyKey, lossQuote: this.dailyLossQuote });
+  }
+
+  /**
+   * Square persisted positions against the exchange after a restart. If a
+   * position's protective bracket is no longer resting, it almost certainly
+   * filled (TP or SL) while we were down — drop it and flag for the journal
+   * to reconcile realized P&L. Positions that were left unprotected (no OCO)
+   * are surfaced loudly for a manual check.
+   */
+  async reconcileOnBoot(): Promise<void> {
+    const positions = this.getOpenPositions();
+    if (positions.length === 0) return;
+    await this.notifier.notify(`🔄 Reconciling ${positions.length} open position(s) on boot…`);
+
+    for (const pos of positions) {
+      if (!pos.ocoOrderId) {
+        await this.notifier.notify(
+          `⚠️ #${pos.tradeId} ${pos.symbol}: tracked but has NO bracket — verify on Binance.`
+        );
+        continue;
+      }
+      let stillOpen: boolean;
+      try {
+        stillOpen = await this.venue.isOrderOpen(pos.symbol, pos.ocoOrderId);
+      } catch (err) {
+        await this.notifier.notify(
+          `⚠️ #${pos.tradeId} ${pos.symbol}: could not check bracket on boot ` +
+            `(${(err as Error).message}); leaving as open.`
+        );
+        continue;
+      }
+      if (!stillOpen) {
+        this.positions.delete(pos.tradeId);
+        this.store.deletePosition(pos.tradeId);
+        await this.notifier.notify(
+          `↩️ #${pos.tradeId} ${pos.symbol}: bracket resolved while offline — ` +
+            `position closed. P&L reconciled by the journal sync.`
+        );
+      }
     }
   }
 
@@ -125,7 +202,7 @@ export class Executor {
       );
     }
 
-    if (this.handledEntries.has(tradeId)) {
+    if (this.store.isHandled(tradeId)) {
       return this.skipEntry(tradeId, "duplicate entry signal (already handled)");
     }
 
@@ -153,9 +230,9 @@ export class Executor {
       );
     }
 
-    // Mark handled BEFORE placing so a retried webhook can't double-buy even
-    // if the buy call is slow.
-    this.handledEntries.add(tradeId);
+    // Mark handled (persisted) BEFORE placing so a retried webhook can't
+    // double-buy even if the buy call is slow or the process restarts.
+    this.store.markHandled(tradeId);
 
     const rawBracket = computeBracket(entry, {
       stopLossPct: this.risk.stopLossPct,
@@ -176,21 +253,22 @@ export class Executor {
       const oco = await this.venue.placeOcoSell(symbol, buy.amount, bracket);
       ocoId = oco.id;
     } catch (err) {
-      // Position is open but unprotected — surface loudly; do not pretend.
       await this.notifier.notify(
         `⚠️ #${tradeId} ${symbol}: bought ${buy.amount} but OCO bracket FAILED ` +
           `(${(err as Error).message}). Position is UNPROTECTED.`
       );
     }
 
-    this.positions.set(tradeId, {
+    const position: OpenPosition = {
       tradeId,
       symbol,
       amount: buy.amount,
       entryPrice: fillPrice,
       stopPrice: bracket.stopPrice,
       ocoOrderId: ocoId,
-    });
+    };
+    this.positions.set(tradeId, position);
+    this.store.savePosition(position);
 
     await this.notifier.notify(
       `🟢 AUTO-ENTRY #${tradeId} ${symbol}: bought ${buy.amount} @ ~${fillPrice} ` +
@@ -223,12 +301,10 @@ export class Executor {
     const sell = await this.venue.marketSell(pos.symbol, pos.amount);
     const realizedQuote = ((sell.price ?? exitPrice) - pos.entryPrice) * pos.amount;
 
-    if (realizedQuote < 0) {
-      this.rollDailyWindow();
-      this.dailyLossQuote += -realizedQuote;
-    }
+    if (realizedQuote < 0) this.addDailyLoss(-realizedQuote);
 
     this.positions.delete(tradeId);
+    this.store.deletePosition(tradeId);
     await this.notifier.notify(
       `🔴 AUTO-EXIT #${tradeId} ${pos.symbol}: sold ${pos.amount} @ ~${sell.price ?? exitPrice} ` +
         `| realized ${realizedQuote >= 0 ? "+" : ""}${realizedQuote.toFixed(2)} USDT`
