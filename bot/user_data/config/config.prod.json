@@ -1,0 +1,47 @@
+{
+    // Production OVERRIDES, merged on top of config.dryrun.json:
+    //   docker compose ... --config config.dryrun.json --config config.prod.json
+    // Secrets are NOT stored here. freqtrade reads env overrides of the form
+    // FREQTRADE__SECTION__KEY, so the compose file injects:
+    //   FREQTRADE__API_SERVER__PASSWORD, FREQTRADE__API_SERVER__JWT_SECRET_KEY,
+    //   FREQTRADE__TELEGRAM__TOKEN, FREQTRADE__TELEGRAM__CHAT_ID
+    //
+    // dry_run stays true (inherited): freqtrade is the signal generator; the
+    // Concierge is what executes. Never set dry_run false here.
+
+    // FreqUI / REST API. listen_ip_address is 0.0.0.0 because this binds
+    // INSIDE the container — Docker's host publish "127.0.0.1:8080:8080" is
+    // what restricts it to the VM's loopback, reached only via SSH tunnel /
+    // Tailscale. The port is never published on a public interface, and UFW
+    // allows SSH only (Hard Invariant 6).
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8080,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "",
+        "ws_token": "",
+        "CORS_origins": [],
+        "username": "freqtrader",
+        "password": ""
+    },
+
+    // freqtrade-native Telegram: daily summary + bot-health only. Execution
+    // alerts come from the Concierge, not here. Token/chat injected via env.
+    "telegram": {
+        "enabled": true,
+        "token": "",
+        "chat_id": "",
+        "notification_settings": {
+            "status": "on",
+            "warning": "on",
+            "startup": "on",
+            "entry": "off",
+            "exit": "off",
+            "entry_cancel": "off",
+            "exit_cancel": "off",
+            "protection_trigger": "on"
+        }
+    }
+}

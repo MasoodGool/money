@@ -3,11 +3,15 @@ import { CcxtBinanceVenue } from "./binance-venue.js";
 import { loadConfig } from "./config.js";
 import { Executor } from "./executor.js";
 import { LogNotifier, type Notifier } from "./notifier.js";
+import { captureException, initSentry } from "./sentry.js";
 import { SqliteStore } from "./sqlite-store.js";
 import { createTelegramTransport, TelegramNotifier } from "./telegram.js";
 import { TelegramCommandListener } from "./telegram-commands.js";
 
 const config = loadConfig();
+// Initialise Sentry before constructing or running anything it should watch.
+// (None of the modules above do work at import time, so this is early enough.)
+initSentry(config.sentryDsn, config.binanceTestnet ? "testnet" : "mainnet");
 
 const venue = new CcxtBinanceVenue({
   apiKey: config.binanceApiKey,
@@ -94,3 +98,13 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.exit(0);
   });
 }
+
+// Last-resort capture so a crash on the money-moving path reaches Sentry.
+process.on("unhandledRejection", (reason) => {
+  app.log.error(reason, "unhandledRejection");
+  captureException(reason);
+});
+process.on("uncaughtException", (err) => {
+  app.log.error(err, "uncaughtException");
+  captureException(err);
+});
