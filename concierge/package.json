@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "ccxt": "^4.5.59",
     "fastify": "^5.2.0"
   },
   "devDependencies": {
