@@ -7,7 +7,7 @@
     "dry_run": true,
     "dry_run_wallet": 1000,
 
-    "strategy": "NoopScaffold",
+    "strategy": "BaselineTrend",
 
     "trading_mode": "spot",
     "margin_mode": "",
@@ -46,9 +46,10 @@
 
     "exchange": {
         "name": "binance",
-        // Keys stay empty in dry-run: public market data needs no auth.
-        // If a key is ever added (Phase 5 journal sync), it must be
-        // READ-ONLY and IP-restricted — see README Hard Invariants.
+        // freqtrade keys stay EMPTY, permanently. freqtrade is the signal
+        // generator only and runs dry-run on public market data — it never
+        // authenticates to trade. The trade-permission key lives in the
+        // Concierge, which is what actually places orders.
         "key": "",
         "secret": "",
         "ccxt_config": {},
@@ -65,9 +66,9 @@
         {"method": "StaticPairList"}
     ],
 
-    // Entry/exit signals route to the Concierge, which owns risk sizing
-    // and Telegram ticket formatting (Phase 2). Retries so a transient
-    // Concierge hiccup does not silently drop a signal.
+    // Entry/exit signals route to the Concierge, which sizes the position
+    // and auto-executes on Binance. Retries so a transient Concierge hiccup
+    // does not silently drop a signal.
     "webhook": {
         "enabled": true,
         "url": "http://concierge:3000/signal",
