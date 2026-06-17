@@ -13,7 +13,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "validate:testnet": "tsx scripts/validate-testnet.ts"
   },
   "dependencies": {
     "ccxt": "^4.5.59",
