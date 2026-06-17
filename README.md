@@ -160,8 +160,14 @@ npm run dev       # local server with reload
   OCO stop/TP bracket via ccxt against Binance testnet. Risk and executor
   logic are unit-tested with a fake venue; the live ccxt OCO path still needs
   testnet validation (egress is blocked in CI/dev here).
-- [ ] **Telegram notifications**: wire the `LogNotifier` to a real Telegram
-  bot (notify-only) + `/equity`, `/kill`, `/risk` control commands.
+- [x] **Telegram notifications**: `TelegramNotifier` pushes notify-only alerts
+  via the Bot API (selected when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are
+  set, else falls back to stdout). Resilient — a Telegram outage is logged and
+  never breaks order execution; sends are bounded by a 5s timeout. Unit-tested
+  with an injected transport. (Live delivery unverified here — `api.telegram.org`
+  is egress-blocked in dev.)
+- [ ] **Telegram control commands**: `/equity`, `/kill`, `/risk` (inbound; the
+  notifier is currently one-way).
 - [ ] **Phase 4 — GCP deployment + monitoring**: e2-small VM, Sentry,
   healthcheck cron, tunnel-only FreqUI, documented key creation (trade-only,
   no withdrawal, IP-restricted).

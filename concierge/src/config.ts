@@ -38,6 +38,10 @@ export interface ConciergeConfig {
    * misconfigured deploy never trades by accident.
    */
   killSwitch: boolean;
+  /** Telegram bot token; when empty the Concierge logs instead of sending. */
+  telegramBotToken: string;
+  /** Telegram chat id alerts are sent to. */
+  telegramChatId: string;
   risk: RiskConfig;
 }
 
@@ -66,6 +70,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConciergeConfi
     binanceTestnet: bool("BINANCE_TESTNET", true),
     // Trading is opt-in: only armed when KILL_SWITCH is explicitly off.
     killSwitch: bool("KILL_SWITCH", true),
+    telegramBotToken: env["TELEGRAM_BOT_TOKEN"] ?? "",
+    telegramChatId: env["TELEGRAM_CHAT_ID"] ?? "",
     risk: {
       equity: num("RISK_EQUITY", 1000),
       riskPerTrade: num("RISK_PER_TRADE", 0.01),

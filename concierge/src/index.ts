@@ -2,7 +2,8 @@ import { buildApp } from "./app.js";
 import { CcxtBinanceVenue } from "./binance-venue.js";
 import { loadConfig } from "./config.js";
 import { Executor } from "./executor.js";
-import { LogNotifier } from "./notifier.js";
+import { LogNotifier, type Notifier } from "./notifier.js";
+import { TelegramNotifier } from "./telegram.js";
 
 const config = loadConfig();
 
@@ -12,14 +13,28 @@ const venue = new CcxtBinanceVenue({
   testnet: config.binanceTestnet,
 });
 
+// Telegram when configured, otherwise log to stdout. A missing token must
+// never silence alerts entirely — it degrades to the log.
+const telegramConfigured = config.telegramBotToken !== "" && config.telegramChatId !== "";
+const notifier: Notifier = telegramConfigured
+  ? new TelegramNotifier({ botToken: config.telegramBotToken, chatId: config.telegramChatId })
+  : new LogNotifier();
+
 const executor = new Executor({
   venue,
-  notifier: new LogNotifier(),
+  notifier,
   risk: config.risk,
   killSwitch: config.killSwitch,
 });
 
 const app = buildApp({ executor });
+
+app.log.info(
+  { notifier: telegramConfigured ? "telegram" : "log" },
+  telegramConfigured
+    ? "Alerts → Telegram"
+    : "Alerts → stdout log (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID for Telegram)"
+);
 
 // Loud, unmissable banner about the execution mode this process booted in.
 app.log.warn(
