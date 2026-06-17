@@ -149,30 +149,35 @@ npm run dev       # local server with reload
   (`/signal` + `/healthz`, payload logging only); webhook plumbing verified;
   data download script in place. The Phase 0 strategy (`NoopScaffold`) never
   signals — it exists only to boot the pipeline.
-- [ ] **Phase 1 — Baseline strategy + backtesting discipline**: `BaselineTrend`
-  (EMA20/50 cross + RSI + volume, 4h), look-ahead-audited; in-sample
-  2024-01 → 2025-06, out-of-sample 2025-07 → touched once; fees 0.1%/side,
-  slippage 0.03%. Graduation bar: positive out-of-sample expectancy after
-  fees+slippage, max drawdown < 20%, ≥ 30 trades in sample.
-- [~] **Auto-execution engine** (replaces the manual Telegram-ticket plan):
+- [x] **Phase 1 — Baseline strategy + backtesting discipline**: `BaselineTrend`
+  (EMA20/50 cross + RSI + volume, 4h), no look-ahead (closed candles +
+  qtpylib crosses); 7 deterministic signal tests; `scripts/backtest.sh` runs
+  in-sample (tune) vs out-of-sample (touch once) with fee+slippage. Graduation
+  bar documented. (Backtest *runs* need candles + egress; signal logic fully
+  unit-tested.)
+- [x] **Auto-execution engine** (replaces the manual Telegram-ticket plan):
   Concierge sizes (1% rule + 20% clamp), guards (kill switch, 3% daily-loss
-  breaker, per-`trade_id` idempotency), and places a market entry + resting
-  OCO stop/TP bracket via ccxt against Binance testnet. Risk and executor
-  logic are unit-tested with a fake venue; the live ccxt OCO path still needs
-  testnet validation (egress is blocked in CI/dev here).
-- [x] **Telegram notifications**: `TelegramNotifier` pushes notify-only alerts
-  via the Bot API (selected when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are
-  set, else falls back to stdout). Resilient — a Telegram outage is logged and
-  never breaks order execution; sends are bounded by a 5s timeout. Unit-tested
-  with an injected transport. (Live delivery unverified here — `api.telegram.org`
-  is egress-blocked in dev.)
-- [ ] **Telegram control commands**: `/equity`, `/kill`, `/risk` (inbound; the
-  notifier is currently one-way).
-- [ ] **Phase 4 — GCP deployment + monitoring**: e2-small VM, Sentry,
-  healthcheck cron, tunnel-only FreqUI, documented key creation (trade-only,
-  no withdrawal, IP-restricted).
-- [ ] **Phase 5 — Execution journal & feedback loop**: nightly trade-history
-  sync, weekly paper-vs-real report, CSV export (SARS record).
+  breaker, per-`trade_id` idempotency, step-size + min-notional), and places a
+  market entry + resting OCO stop/TP bracket via ccxt. Exchange code isolated
+  behind `ExecutionVenue`; the live ccxt OCO path is validated by the testnet
+  drill before any mainnet flip.
+- [x] **Durable state + boot reconciliation**: `node:sqlite` persists open
+  positions, idempotency, daily tally, equity, kill switch; on boot,
+  positions whose bracket no longer rests are reconciled (TP/SL filled while
+  offline).
+- [x] **Telegram alerts + control**: `TelegramNotifier` (notify-only, resilient,
+  5s timeout) and a two-way command listener — `/kill`, `/arm`, `/equity`,
+  `/risk`, `/status` — authorised to the configured chat only.
+- [x] **Phase 4 — GCP deployment + monitoring**: `docker-compose.prod.yml`,
+  `scripts/deploy.sh`, 5-min `scripts/healthcheck.sh` cron, Sentry, FreqUI via
+  SSH tunnel, `docs/deployment.md` with trade-only/no-withdrawal/IP-restricted
+  key creation.
+- [x] **Phase 5 — Execution journal & feedback loop**: SQLite journal of every
+  entry/exit/skip; nightly `sync-trades.ts` reconciles fills against Binance
+  `myTrades`; `weekly-report.ts` (real P&L, slippage bps, skip analysis, paper
+  baseline); `export-csv.ts` SARS record.
+- [ ] **Before mainnet**: run `docs/testnet-validation.md` (esp. OCO rests on
+  the book) and clear the Phase 1 graduation bar on out-of-sample data.
 - [ ] **Phase 6 — Iteration**: hyperopt (in-sample only), parallel
   strategies, dynamic pairlists.
 

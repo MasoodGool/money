@@ -26,6 +26,7 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - SENTRY_DSN=${SENTRY_DSN}
       - STATE_DB_PATH=/data/concierge-state.sqlite
+      - JOURNAL_DB_PATH=/data/concierge-journal.sqlite
       - RISK_EQUITY=${RISK_EQUITY:-1000}
       - RISK_PER_TRADE=${RISK_PER_TRADE:-0.01}
       - RISK_MAX_POSITION_PCT=${RISK_MAX_POSITION_PCT:-0.20}

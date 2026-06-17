@@ -17,6 +17,7 @@
  */
 
 import type { RiskConfig } from "./config.js";
+import { type Journal, NoopJournal } from "./journal.js";
 import type { Notifier } from "./notifier.js";
 import { computeBracket, computePositionSize } from "./risk.js";
 import { InMemoryStore, type OpenPosition, type StateStore } from "./store.js";
@@ -49,6 +50,8 @@ export interface ExecutorDeps {
   killSwitch: boolean;
   /** Durable state; defaults to in-memory (tests / no-persistence runs). */
   store?: StateStore;
+  /** Execution journal; defaults to no-op. */
+  journal?: Journal;
   /** Clock injection for deterministic daily-reset tests. */
   now?: () => Date;
 }
@@ -65,6 +68,7 @@ export class Executor {
   private readonly notifier: Notifier;
   private readonly risk: RiskConfig;
   private readonly store: StateStore;
+  private readonly journal: Journal;
   private readonly now: () => Date;
 
   // In-memory working copy, loaded from and written through to the store.
@@ -79,6 +83,7 @@ export class Executor {
     this.notifier = deps.notifier;
     this.risk = deps.risk;
     this.store = deps.store ?? new InMemoryStore();
+    this.journal = deps.journal ?? new NoopJournal();
     this.now = deps.now ?? (() => new Date());
 
     // Persisted settings win over config defaults so runtime changes survive
@@ -195,19 +200,21 @@ export class Executor {
     const { trade_id: tradeId, pair: symbol, rate: entry } = signal;
 
     if (this.killSwitch) {
-      return this.skipEntry(tradeId, "kill switch engaged — notify only");
+      return this.skipEntry(tradeId, symbol, entry, "kill switch engaged — notify only");
     }
 
     this.rollDailyWindow();
     if (this.dailyLossQuote >= this.equity * this.risk.dailyLossLimit) {
       return this.skipEntry(
         tradeId,
+        symbol,
+        entry,
         `daily loss limit reached — entries suppressed until 00:00 SAST`
       );
     }
 
     if (this.store.isHandled(tradeId)) {
-      return this.skipEntry(tradeId, "duplicate entry signal (already handled)");
+      return this.skipEntry(tradeId, symbol, entry, "duplicate entry signal (already handled)");
     }
 
     const sizing = computePositionSize({
@@ -218,18 +225,20 @@ export class Executor {
       stopPrice: entry * (1 - this.risk.stopLossPct),
     });
     if (!sizing.ok) {
-      return this.skipEntry(tradeId, `risk rejected: ${sizing.reason}`);
+      return this.skipEntry(tradeId, symbol, entry, `risk rejected: ${sizing.reason}`);
     }
 
     // Round to the exchange step size and enforce the minimum notional.
     const filters = await this.venue.getFilters(symbol);
     const amount = await this.venue.roundAmount(symbol, sizing.baseAmount);
     if (!(amount > 0)) {
-      return this.skipEntry(tradeId, "size rounds to zero at exchange step size");
+      return this.skipEntry(tradeId, symbol, entry, "size rounds to zero at exchange step size");
     }
     if (filters.minNotional !== undefined && amount * entry < filters.minNotional) {
       return this.skipEntry(
         tradeId,
+        symbol,
+        entry,
         `notional ${(amount * entry).toFixed(2)} below min ${filters.minNotional}`
       );
     }
@@ -274,6 +283,20 @@ export class Executor {
     this.positions.set(tradeId, position);
     this.store.savePosition(position);
 
+    this.journal.record({
+      ts: this.now().toISOString(),
+      tradeId,
+      symbol,
+      kind: "entry",
+      status: "placed",
+      signalPrice: entry,
+      fillPrice,
+      amount: buy.amount,
+      stakeQuote: sizing.stakeQuote,
+      realizedQuote: null,
+      reason: ocoId ? null : "no-bracket",
+    });
+
     await this.notifier.notify(
       `🟢 AUTO-ENTRY #${tradeId} ${symbol}: bought ${buy.amount} @ ~${fillPrice} ` +
         `(${sizing.stakeQuote.toFixed(2)} USDT${sizing.clampedToMaxPosition ? ", clamped" : ""}) ` +
@@ -309,6 +332,21 @@ export class Executor {
 
     this.positions.delete(tradeId);
     this.store.deletePosition(tradeId);
+
+    this.journal.record({
+      ts: this.now().toISOString(),
+      tradeId,
+      symbol: pos.symbol,
+      kind: "exit",
+      status: "closed",
+      signalPrice: exitPrice,
+      fillPrice: sell.price ?? null,
+      amount: pos.amount,
+      stakeQuote: null,
+      realizedQuote,
+      reason: null,
+    });
+
     await this.notifier.notify(
       `🔴 AUTO-EXIT #${tradeId} ${pos.symbol}: sold ${pos.amount} @ ~${sell.price ?? exitPrice} ` +
         `| realized ${realizedQuote >= 0 ? "+" : ""}${realizedQuote.toFixed(2)} USDT`
@@ -316,7 +354,25 @@ export class Executor {
     return { action: "closed", tradeId, realizedQuote };
   }
 
-  private async skipEntry(tradeId: string, reason: string): Promise<EntryOutcome> {
+  private async skipEntry(
+    tradeId: string,
+    symbol: string,
+    signalPrice: number,
+    reason: string
+  ): Promise<EntryOutcome> {
+    this.journal.record({
+      ts: this.now().toISOString(),
+      tradeId,
+      symbol,
+      kind: "skip",
+      status: "skipped",
+      signalPrice,
+      fillPrice: null,
+      amount: null,
+      stakeQuote: null,
+      realizedQuote: null,
+      reason,
+    });
     await this.notifier.notify(`⏭️ ENTRY #${tradeId} skipped: ${reason}`);
     return { action: "skipped", tradeId, reason };
   }

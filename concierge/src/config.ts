@@ -44,6 +44,8 @@ export interface ConciergeConfig {
   telegramChatId: string;
   /** Path to the SQLite file holding durable executor state. */
   stateDbPath: string;
+  /** Path to the execution journal SQLite (feedback loop + SARS record). */
+  journalDbPath: string;
   /** Sentry DSN; empty disables Sentry. */
   sentryDsn: string;
   risk: RiskConfig;
@@ -77,6 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConciergeConfi
     telegramBotToken: env["TELEGRAM_BOT_TOKEN"] ?? "",
     telegramChatId: env["TELEGRAM_CHAT_ID"] ?? "",
     stateDbPath: env["STATE_DB_PATH"] ?? "concierge-state.sqlite",
+    journalDbPath: env["JOURNAL_DB_PATH"] ?? "concierge-journal.sqlite",
     sentryDsn: env["SENTRY_DSN"] ?? "",
     risk: {
       equity: num("RISK_EQUITY", 1000),

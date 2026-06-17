@@ -2,6 +2,7 @@ import { buildApp } from "./app.js";
 import { CcxtBinanceVenue } from "./binance-venue.js";
 import { loadConfig } from "./config.js";
 import { Executor } from "./executor.js";
+import { SqliteJournal } from "./journal.js";
 import { LogNotifier, type Notifier } from "./notifier.js";
 import { captureException, initSentry } from "./sentry.js";
 import { SqliteStore } from "./sqlite-store.js";
@@ -27,6 +28,7 @@ const notifier: Notifier = telegramConfigured
   : new LogNotifier();
 
 const store = new SqliteStore(config.stateDbPath);
+const journal = new SqliteJournal(config.journalDbPath);
 
 const executor = new Executor({
   venue,
@@ -34,6 +36,7 @@ const executor = new Executor({
   risk: config.risk,
   killSwitch: config.killSwitch,
   store,
+  journal,
 });
 
 const app = buildApp({ executor });

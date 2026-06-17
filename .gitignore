@@ -30,3 +30,4 @@ concierge/dist/
 .idea/
 .DS_Store
 concierge-state.sqlite
+concierge-journal.sqlite
