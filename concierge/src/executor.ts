@@ -122,6 +122,10 @@ export class Executor {
     return this.equity;
   }
 
+  getRiskConfig(): RiskConfig {
+    return this.risk;
+  }
+
   getOpenPositions(): OpenPosition[] {
     return [...this.positions.values()];
   }

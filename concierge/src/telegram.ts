@@ -7,6 +7,7 @@
  */
 
 import type { Notifier } from "./notifier.js";
+import type { TelegramTransport, TelegramUpdate } from "./telegram-commands.js";
 
 /** Minimal POST result so tests don't need to fake the whole fetch Response. */
 export interface PostResult {
@@ -70,4 +71,46 @@ export class TelegramNotifier implements Notifier {
       this.log(`telegram send error: ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * Live Telegram transport for the command listener: a 30s long-poll on
+ * getUpdates plus a sendMessage. Built on global fetch with timeouts.
+ */
+export function createTelegramTransport(botToken: string): TelegramTransport {
+  const base = `https://api.telegram.org/bot${botToken}`;
+  return {
+    async getUpdates(offset: number): Promise<TelegramUpdate[]> {
+      // Long-poll up to 30s; client timeout slightly higher so we don't abort
+      // a healthy poll early.
+      const res = await fetch(`${base}/getUpdates?timeout=30&offset=${offset}`, {
+        signal: AbortSignal.timeout(35000),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        result?: Array<{ update_id: number; message?: { text?: string; chat?: { id: number } } }>;
+      };
+      if (!data.ok || !data.result) return [];
+      const updates: TelegramUpdate[] = [];
+      for (const u of data.result) {
+        const text = u.message?.text;
+        const chatId = u.message?.chat?.id;
+        if (typeof text === "string" && chatId !== undefined) {
+          updates.push({ updateId: u.update_id, chatId: String(chatId), text });
+        } else {
+          // Still advance past non-text updates so we don't re-fetch them.
+          updates.push({ updateId: u.update_id, chatId: "", text: "" });
+        }
+      }
+      return updates;
+    },
+    async sendMessage(chatId: string, text: string): Promise<void> {
+      await fetch(`${base}/sendMessage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+        signal: AbortSignal.timeout(5000),
+      });
+    },
+  };
 }

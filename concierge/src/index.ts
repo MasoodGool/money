@@ -4,7 +4,8 @@ import { loadConfig } from "./config.js";
 import { Executor } from "./executor.js";
 import { LogNotifier, type Notifier } from "./notifier.js";
 import { SqliteStore } from "./sqlite-store.js";
-import { TelegramNotifier } from "./telegram.js";
+import { createTelegramTransport, TelegramNotifier } from "./telegram.js";
+import { TelegramCommandListener } from "./telegram-commands.js";
 
 const config = loadConfig();
 
@@ -39,6 +40,19 @@ app.log.info(
     ? "Alerts → Telegram"
     : "Alerts → stdout log (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID for Telegram)"
 );
+
+// Two-way control: poll for /kill, /arm, /equity, /risk, /status. This is the
+// remote safety panel — start it even when armed-off so the human can /arm.
+if (telegramConfigured) {
+  const listener = new TelegramCommandListener({
+    transport: createTelegramTransport(config.telegramBotToken),
+    chatId: config.telegramChatId,
+    context: { executor, testnet: config.binanceTestnet },
+    log: (m) => app.log.warn(m),
+  });
+  listener.start();
+  app.log.info("Telegram command listener started (/help for commands)");
+}
 
 // Loud, unmissable banner about the execution mode this process booted in.
 app.log.warn(
