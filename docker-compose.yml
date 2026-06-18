@@ -1,5 +1,9 @@
 # Local/dev compose. Phase 4 adds docker-compose.prod.yml for the GCP VM.
 #
+# Safe by default: with no .env, the Concierge boots with KILL_SWITCH on and
+# BINANCE_TESTNET on, so `docker compose up` trades nothing. To test on a
+# dummy (testnet) account, fill .env with a testnet key and set KILL_SWITCH=0.
+#
 # Hard invariants embodied here:
 #   - freqtrade image is version-pinned (never `latest`)
 #   - freqtrade runs `trade` against config.dryrun.json (dry_run: true)
@@ -12,6 +16,24 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3000
+      # Execution (auto-arms only when you set KILL_SWITCH=0 in .env).
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - BINANCE_TESTNET=${BINANCE_TESTNET:-1}
+      - KILL_SWITCH=${KILL_SWITCH:-1}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - STATE_DB_PATH=/data/concierge-state.sqlite
+      - JOURNAL_DB_PATH=/data/concierge-journal.sqlite
+      - RISK_EQUITY=${RISK_EQUITY:-1000}
+      - RISK_PER_TRADE=${RISK_PER_TRADE:-0.01}
+      - RISK_MAX_POSITION_PCT=${RISK_MAX_POSITION_PCT:-0.20}
+      - RISK_DAILY_LOSS_LIMIT=${RISK_DAILY_LOSS_LIMIT:-0.03}
+      - RISK_STOP_LOSS_PCT=${RISK_STOP_LOSS_PCT:-0.05}
+      - RISK_TAKE_PROFIT_PCT=${RISK_TAKE_PROFIT_PCT:-0.08}
+    volumes:
+      # Persist state + journal across `docker compose down/up`.
+      - concierge_data:/data
     ports:
       # Loopback-only so local curl can simulate webhooks; never 0.0.0.0.
       - "127.0.0.1:3000:3000"
@@ -20,7 +42,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -45,3 +67,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  concierge_data:
+
