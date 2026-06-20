@@ -23,16 +23,19 @@ STRATEGY="${STRATEGY:-BaselineTrendV2}"
 FEE="${FEE:-0.0013}"
 INSAMPLE="${INSAMPLE:-20240101-20250601}"
 OUTSAMPLE="${OUTSAMPLE:-20250701-}"
+# Leave TIMEFRAME unset to use each strategy's own `timeframe` (e.g. BbandRsi
+# is 1h). Set it to force one, e.g. TIMEFRAME=4h.
+TIMEFRAME="${TIMEFRAME:-}"
 
 run() {
     local label="$1" timerange="$2"
     echo
     echo "============================================================"
-    echo " ${label}  (${timerange})  strategy=${STRATEGY}  fee=${FEE}"
+    echo " ${label}  (${timerange})  strategy=${STRATEGY}  fee=${FEE}${TIMEFRAME:+  tf=${TIMEFRAME}}"
     echo "============================================================"
     ft backtesting \
         --strategy "${STRATEGY}" \
-        --timeframe 4h \
+        ${TIMEFRAME:+--timeframe "${TIMEFRAME}"} \
         --timerange "${timerange}" \
         --fee "${FEE}" \
         --enable-protections
