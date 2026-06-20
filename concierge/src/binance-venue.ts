@@ -3,10 +3,9 @@
  * exchange; everything else works against the ExecutionVenue interface.
  *
  * TESTNET-FIRST: with `testnet: true` ccxt points at testnet.binance.vision
- * (fake balances, real API surface). The OCO bracket below is the one piece
- * whose exact wire format is ccxt/Binance-version-sensitive — VALIDATE IT
- * AGAINST TESTNET before ever flipping to mainnet. That validation is the
- * whole reason testnet-first was chosen.
+ * (fake balances, real API surface). The OCO bracket is placed via Binance's
+ * order-list endpoint directly (ccxt's createOrder + stopLossPrice builds a
+ * SINGLE conditional order, not a one-cancels-other bracket).
  */
 
 import ccxt, { type Exchange } from "ccxt";
@@ -17,6 +16,12 @@ export interface BinanceVenueOptions {
   apiKey: string;
   secret: string;
   testnet: boolean;
+}
+
+/** ccxt implicit (raw) Binance endpoints not surfaced on the typed Exchange. */
+interface BinanceOcoApi {
+  privatePostOrderListOco(params: Record<string, unknown>): Promise<Record<string, unknown>>;
+  privateDeleteOrderList(params: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export class CcxtBinanceVenue implements ExecutionVenue {
@@ -93,24 +98,35 @@ export class CcxtBinanceVenue implements ExecutionVenue {
     bracket: OcoBracket
   ): Promise<OrderReceipt> {
     await this.ensureMarkets();
-    // ccxt unified OCO: a limit sell at the take-profit, with stopLossPrice
-    // (trigger) and the stop-limit price supplied via params. ccxt's binance
-    // implementation routes this to the OCO order-list endpoint.
-    const order = await this.exchange.createOrder(
-      symbol,
-      "limit",
-      "sell",
-      amount,
-      bracket.takeProfitPrice,
-      {
-        stopLossPrice: bracket.stopPrice,
-        price: bracket.stopLimitPrice,
-        // Binance requires explicit stop-limit price for the SL leg.
-        stopLimitPrice: bracket.stopLimitPrice,
-      }
-    );
+    const market = this.exchange.market(symbol);
+    const api = this.exchange as unknown as BinanceOcoApi;
+
+    // Binance spot OCO (POST /api/v3/orderList/oco). For a SELL bracket
+    // protecting a long position:
+    //   above = take-profit  (LIMIT_MAKER resting above the market)
+    //   below = stop-loss     (STOP_LOSS_LIMIT triggered below the market)
+    // Only the stop-limit leg takes a timeInForce; adding one to LIMIT_MAKER
+    // would be rejected as an unread parameter (-1104).
+    //
+    // MAINNET NOTE: spot market-buy fees are taken in the base asset, so the
+    // free balance is slightly below `amount` (the filled qty). With testnet
+    // commissions off this is exact; before mainnet, cap `amount` to the free
+    // base balance or the OCO can fail with insufficient balance (-2010).
+    const resp = await api.privatePostOrderListOco({
+      symbol: market.id,
+      side: "SELL",
+      quantity: this.exchange.amountToPrecision(symbol, amount),
+      aboveType: "LIMIT_MAKER",
+      abovePrice: this.exchange.priceToPrecision(symbol, bracket.takeProfitPrice),
+      belowType: "STOP_LOSS_LIMIT",
+      belowStopPrice: this.exchange.priceToPrecision(symbol, bracket.stopPrice),
+      belowPrice: this.exchange.priceToPrecision(symbol, bracket.stopLimitPrice),
+      belowTimeInForce: "GTC",
+    });
+
     return {
-      id: String(order.id),
+      // Track by the order-list id; isOrderOpen / cancel both key off it.
+      id: String(resp["orderListId"]),
       amount,
       price: bracket.takeProfitPrice,
     };
@@ -118,10 +134,12 @@ export class CcxtBinanceVenue implements ExecutionVenue {
 
   async cancelOrder(symbol: string, id: string): Promise<void> {
     await this.ensureMarkets();
-    // Binance OCO lists cancel via the order-list id; fall back to plain
-    // cancel for single orders.
+    const market = this.exchange.market(symbol);
+    const api = this.exchange as unknown as BinanceOcoApi;
+    // Cancel the whole OCO list by its id; fall back to a plain single-order
+    // cancel if this id turns out not to be a list.
     try {
-      await this.exchange.cancelOrder(id, symbol, { orderListId: id });
+      await api.privateDeleteOrderList({ symbol: market.id, orderListId: id });
     } catch {
       await this.exchange.cancelOrder(id, symbol);
     }
