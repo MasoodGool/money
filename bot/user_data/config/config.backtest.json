@@ -10,7 +10,7 @@
     "dry_run": true,
     "dry_run_wallet": 1000,
 
-    "strategy": "BaselineTrend",
+    "strategy": "BaselineTrendV2",
 
     "trading_mode": "spot",
     "margin_mode": "",
@@ -46,7 +46,16 @@
         "pair_whitelist": [
             "BTC/USDT",
             "ETH/USDT",
-            "SOL/USDT"
+            "SOL/USDT",
+            "BNB/USDT",
+            "XRP/USDT",
+            "ADA/USDT",
+            "AVAX/USDT",
+            "LINK/USDT",
+            "LTC/USDT",
+            "DOT/USDT",
+            "DOGE/USDT",
+            "ATOM/USDT"
         ],
         "pair_blacklist": []
     },

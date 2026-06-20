@@ -151,10 +151,22 @@ npm run dev       # local server with reload
   signals — it exists only to boot the pipeline.
 - [x] **Phase 1 — Baseline strategy + backtesting discipline**: `BaselineTrend`
   (EMA20/50 cross + RSI + volume, 4h), no look-ahead (closed candles +
-  qtpylib crosses); 7 deterministic signal tests; `scripts/backtest.sh` runs
-  in-sample (tune) vs out-of-sample (touch once) with fee+slippage. Graduation
-  bar documented. (Backtest *runs* need candles + egress; signal logic fully
-  unit-tested.)
+  qtpylib crosses); deterministic signal tests; `scripts/backtest.sh` runs
+  in-sample (tune) vs out-of-sample (touch once) with fee+slippage. **V1
+  FAILED the graduation bar** — it lost in both a +58% bull (in-sample) and a
+  −41% bear (out-of-sample); backwards risk/reward (ROI-capped small winners,
+  bigger losers). Out-of-sample is now spent for V1.
+- [~] **`BaselineTrendV2`** (in-sample tuning candidate): three structural
+  fixes for V1's failure — a **daily-trend regime filter** (only long while
+  price > 1d EMA50), a **trailing stop** so winners run instead of being
+  ROI-capped, and a **12-pair universe** for ≥30-trade significance. Default
+  strategy in the configs and `backtest.sh`. Signal logic unit-tested; awaits
+  a walk-forward run. ⚠️ **Live-execution note:** V2's edge is the trailing
+  stop, which freqtrade manages and surfaces as an exit webhook — but the
+  Concierge currently places a *fixed* TP leg that would cap winners early.
+  If V2 graduates, the Concierge bracket must become stop-only (or far-TP) and
+  let freqtrade's exit drive the close. Backtest first; this is a pre-mainnet
+  fix, moot until V2 earns it.
 - [x] **Auto-execution engine** (replaces the manual Telegram-ticket plan):
   Concierge sizes (1% rule + 20% clamp), guards (kill switch, 3% daily-loss
   breaker, per-`trade_id` idempotency, step-size + min-notional), and places a

@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/_freqtrade.sh
 source "$(dirname "$0")/_freqtrade.sh"
 
-STRATEGY="${STRATEGY:-BaselineTrend}"
+STRATEGY="${STRATEGY:-BaselineTrendV2}"
 FEE="${FEE:-0.0013}"
 INSAMPLE="${INSAMPLE:-20240101-20250601}"
 OUTSAMPLE="${OUTSAMPLE:-20250701-}"
