@@ -31,3 +31,6 @@ concierge/dist/
 .DS_Store
 concierge-state.sqlite
 concierge-journal.sqlite
+
+# Backtest run logs
+logs/

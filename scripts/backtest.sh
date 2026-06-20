@@ -41,10 +41,16 @@ run() {
         --enable-protections
 }
 
-run "IN-SAMPLE (tune freely)" "${INSAMPLE}"
-run "OUT-OF-SAMPLE (touch once!)" "${OUTSAMPLE}"
+# Tee everything (stdout + stderr) to a timestamped log you can just attach.
+# The brace-group | tee guarantees the file is flushed before we print the path.
+mkdir -p logs
+LOGFILE="logs/backtest-${STRATEGY}${TIMEFRAME:+-${TIMEFRAME}}-$(date -u +%Y%m%d-%H%M%SZ).log"
 
-cat <<'NOTE'
+{
+    run "IN-SAMPLE (tune freely)" "${INSAMPLE}"
+    run "OUT-OF-SAMPLE (touch once!)" "${OUTSAMPLE}"
+
+    cat <<'NOTE'
 
 ------------------------------------------------------------
 Graduation bar (must hold on OUT-OF-SAMPLE):
@@ -53,3 +59,8 @@ Graduation bar (must hold on OUT-OF-SAMPLE):
   - >= 30 trades in sample
 Only a strategy that clears this is a candidate for the mainnet flip.
 NOTE
+} 2>&1 | tee "${LOGFILE}"
+
+echo
+echo "📄 Full log saved to: ${LOGFILE}"
+echo "   Send me that file (it has both backtest tables + summary metrics)."
