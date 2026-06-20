@@ -2,6 +2,9 @@
 # Reproducible backtest: runs BaselineTrend over the in-sample and
 # out-of-sample windows and prints both results for comparison.
 #
+# Runs natively if `freqtrade` is available (set FREQTRADE_BIN to point at a
+# venv), otherwise via Docker — see scripts/_freqtrade.sh.
+#
 # Backtesting discipline (Phase 1):
 #   - IN-SAMPLE   2024-01-01 → 2025-06-01 : tune here, as often as you like.
 #   - OUT-OF-SAMPLE 2025-07-01 → present  : touch ONCE per strategy version.
@@ -13,12 +16,13 @@
 # Phase 5 produces a real slippage distribution.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=scripts/_freqtrade.sh
+source "$(dirname "$0")/_freqtrade.sh"
 
 STRATEGY="${STRATEGY:-BaselineTrend}"
 FEE="${FEE:-0.0013}"
 INSAMPLE="${INSAMPLE:-20240101-20250601}"
 OUTSAMPLE="${OUTSAMPLE:-20250701-}"
-CONFIG=/freqtrade/user_data/config/config.backtest.json
 
 run() {
     local label="$1" timerange="$2"
@@ -26,8 +30,7 @@ run() {
     echo "============================================================"
     echo " ${label}  (${timerange})  strategy=${STRATEGY}  fee=${FEE}"
     echo "============================================================"
-    docker compose run --rm freqtrade backtesting \
-        --config "${CONFIG}" \
+    ft backtesting \
         --strategy "${STRATEGY}" \
         --timeframe 4h \
         --timerange "${timerange}" \
@@ -44,7 +47,6 @@ cat <<'NOTE'
 Graduation bar (must hold on OUT-OF-SAMPLE):
   - positive expectancy after fees + slippage
   - max drawdown < 20%
-  - >= 30 trades in-sample
+  - >= 30 trades in sample
 Only a strategy that clears this is a candidate for the mainnet flip.
-------------------------------------------------------------
 NOTE
