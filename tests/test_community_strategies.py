@@ -17,6 +17,7 @@ sys.path.insert(0, str(STRAT_DIR))
 
 from donchian_breakout import DonchianBreakout  # noqa: E402
 from rsi_pullback import RsiPullback  # noqa: E402
+from scalp_ema_rsi import ScalpEmaRsi  # noqa: E402
 
 
 def _frame(rows: dict) -> pd.DataFrame:
@@ -88,3 +89,39 @@ def test_pullback_exits_when_rsi_recovers():
     df = _frame({"close": [100, 100], "ema200": [90, 90], "rsi": [60, 70], "volume": [1, 1]})
     out = strat.populate_exit_trend(df, {"pair": "BTC/USDT"})
     assert out["exit_long"].fillna(0).astype(int).tolist() == [0, 1]
+
+
+# --- ScalpEmaRsi (aggressive day-trading, 15m) --------------------------------
+
+def test_scalp_enters_on_fast_momentum_with_volume():
+    strat = ScalpEmaRsi({})
+    df = _frame(
+        {
+            "ema9": [100, 100],
+            "ema21": [99, 101],         # fast-up only on row 0
+            "rsi": [55, 55],            # in the 50–70 momentum band
+            "close": [101, 101],        # above ema9
+            "volume": [100, 100],
+            "volume_mean_20": [50, 50],
+        }
+    )
+    out = strat.populate_entry_trend(df, {"pair": "BTC/USDT"})
+    # Row 0: ema9>ema21, rsi in band, vol ok, close>ema9 -> enter.
+    # Row 1: ema9<ema21 -> no.
+    assert out["enter_long"].fillna(0).astype(int).tolist() == [1, 0]
+
+
+def test_scalp_blocks_when_overbought_or_thin_volume():
+    strat = ScalpEmaRsi({})
+    df = _frame(
+        {
+            "ema9": [100, 100],
+            "ema21": [99, 99],
+            "rsi": [75, 55],            # row 0 overbought; row 1 ok…
+            "close": [101, 101],
+            "volume": [100, 40],        # …but row 1 has thin volume
+            "volume_mean_20": [50, 50],
+        }
+    )
+    out = strat.populate_entry_trend(df, {"pair": "BTC/USDT"})
+    assert out["enter_long"].fillna(0).sum() == 0
