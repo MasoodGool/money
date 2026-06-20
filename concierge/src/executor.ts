@@ -247,7 +247,15 @@ export class Executor {
     // double-buy even if the buy call is slow or the process restarts.
     this.store.markHandled(tradeId);
 
-    const rawBracket = computeBracket(entry, {
+    const buy = await this.venue.marketBuy(symbol, amount);
+    const fillPrice = buy.price ?? entry;
+
+    // Derive the bracket from the ACTUAL fill, not the signal price. The
+    // signal can be stale or (on testnet) far from the venue's market, and a
+    // stop computed off a stale price can land on the wrong side of the
+    // market — Binance rejects that OCO (-2010). Bracketing off the fill
+    // keeps the stop below and the TP above the real entry, always.
+    const rawBracket = computeBracket(fillPrice, {
       stopLossPct: this.risk.stopLossPct,
       stopLimitOffsetPct: this.risk.stopLimitOffsetPct,
       takeProfitPct: this.risk.takeProfitPct,
@@ -257,9 +265,6 @@ export class Executor {
       stopPrice: await this.venue.roundPrice(symbol, rawBracket.stopPrice),
       stopLimitPrice: await this.venue.roundPrice(symbol, rawBracket.stopLimitPrice),
     };
-
-    const buy = await this.venue.marketBuy(symbol, amount);
-    const fillPrice = buy.price ?? entry;
 
     let ocoId: string | undefined;
     try {
