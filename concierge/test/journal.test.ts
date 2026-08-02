@@ -23,6 +23,9 @@ const RISK: RiskConfig = {
 class FakeVenue implements ExecutionVenue {
   buyPrice = 100.5;
   sellPrice = 110;
+  async getPrice(): Promise<number> {
+    return this.buyPrice ?? 100;
+  }
   async getFilters(): Promise<MarketFilters> {
     return { amountStep: 0.001, priceTick: 0.01, minNotional: 10 };
   }

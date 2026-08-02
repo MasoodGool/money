@@ -14,6 +14,11 @@ export interface OpenPosition {
   stopPrice: number;
   /** OCO order-list id protecting the position, if the bracket was placed. */
   ocoOrderId: string | undefined;
+  /**
+   * ISO timestamp of the entry fill. Needed to tell a same-day round trip
+   * (a day trade, which is regulated on equities) from an overnight hold.
+   */
+  openedAt: string;
 }
 
 export interface DailyState {

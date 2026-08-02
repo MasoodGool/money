@@ -32,6 +32,11 @@ export interface OrderReceipt {
 export interface ExecutionVenue {
   /** Load and cache symbol filters (precision, min notional). */
   getFilters(symbol: string): Promise<MarketFilters>;
+  /**
+   * Last traded price for a symbol. Signals that carry no price of their own
+   * (a tweet, for instance) are marked to this before sizing.
+   */
+  getPrice(symbol: string): Promise<number>;
   /** Round a base quantity down to the symbol's step size. */
   roundAmount(symbol: string, amount: number): Promise<number>;
   /** Round a price to the symbol's tick size. */

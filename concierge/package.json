@@ -2,7 +2,7 @@
   "name": "concierge",
   "version": "0.1.0",
   "private": true,
-  "description": "Signal concierge: receives freqtrade webhooks, will own risk sizing and Telegram tickets (Phase 2+). Phase 0: payload logging only.",
+  "description": "Signal concierge: reads @TradexWhisperer tweets, classifies each one with Claude, and auto-executes the calls through a risk gate on Binance spot.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -14,9 +14,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "validate:testnet": "tsx scripts/validate-testnet.ts"
+    "validate:testnet": "tsx scripts/validate-testnet.ts",
+    "backfill:tweets": "tsx scripts/backfill-tweets.ts",
+    "demo:tweets": "tsx scripts/demo-tweets.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@sentry/node": "^8.55.2",
     "ccxt": "^4.5.59",
     "fastify": "^5.2.0"

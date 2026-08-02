@@ -31,6 +31,9 @@ class FakeVenue implements ExecutionVenue {
   sellPrice = 100;
   ocoShouldFail = false;
 
+  async getPrice(): Promise<number> {
+    return this.buyPrice ?? 100;
+  }
   async getFilters(): Promise<MarketFilters> {
     return this.filters;
   }

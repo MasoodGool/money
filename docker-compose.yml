@@ -1,8 +1,18 @@
 # Local/dev compose. Phase 4 adds docker-compose.prod.yml for the GCP VM.
 #
+# The Concierge is the whole runtime: it reads the followed X account, has
+# Claude classify each tweet, and executes the calls through the risk gate.
+# The default venue is Alpaca (US equities), because the followed account
+# calls stocks; VENUE=binance switches it to crypto spot.
+#
 # Safe by default: with no .env, the Concierge boots with KILL_SWITCH on and
-# BINANCE_TESTNET on, so `docker compose up` trades nothing. To test on a
-# dummy (testnet) account, fill .env with a testnet key and set KILL_SWITCH=0.
+# the venue in its fake-money mode (ALPACA_PAPER / BINANCE_TESTNET), so
+# `docker compose up` trades nothing. Without X_BEARER_TOKEN +
+# ANTHROPIC_API_KEY the tweet feed stays off and says so.
+#
+# freqtrade is now OPTIONAL and off by default — it is kept only for
+# backtesting research, behind the `freqtrade` profile:
+#     docker compose --profile freqtrade up -d
 #
 # Hard invariants embodied here:
 #   - freqtrade image is version-pinned (never `latest`)
@@ -16,6 +26,13 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3000
+      # Venue: alpaca (US equities, default) or binance (crypto).
+      - VENUE=${VENUE:-alpaca}
+      - ALPACA_API_KEY_ID=${ALPACA_API_KEY_ID:-}
+      - ALPACA_API_SECRET_KEY=${ALPACA_API_SECRET_KEY:-}
+      - ALPACA_PAPER=${ALPACA_PAPER:-1}
+      - ALPACA_DAY_TRADE_LIMIT=${ALPACA_DAY_TRADE_LIMIT:-3}
+      - ALPACA_PDT_EQUITY_FLOOR=${ALPACA_PDT_EQUITY_FLOOR:-25000}
       # Execution (auto-arms only when you set KILL_SWITCH=0 in .env).
       - BINANCE_API_KEY=${BINANCE_API_KEY:-}
       - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
@@ -31,6 +48,20 @@ services:
       - RISK_DAILY_LOSS_LIMIT=${RISK_DAILY_LOSS_LIMIT:-0.03}
       - RISK_STOP_LOSS_PCT=${RISK_STOP_LOSS_PCT:-0.05}
       - RISK_TAKE_PROFIT_PCT=${RISK_TAKE_PROFIT_PCT:-0.08}
+      # Tweet signal source. The feed stays off unless both keys are present.
+      - X_BEARER_TOKEN=${X_BEARER_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TWEET_HANDLE=${TWEET_HANDLE:-TradexWhisperer}
+      - TWEET_SIGNALS_ENABLED=${TWEET_SIGNALS_ENABLED:-1}
+      - TWEET_ANALYST_MODEL=${TWEET_ANALYST_MODEL:-claude-opus-5}
+      - TWEET_POLL_SECONDS=${TWEET_POLL_SECONDS:-60}
+      - TWEET_BACKFILL_DAYS=${TWEET_BACKFILL_DAYS:-30}
+      - TWEET_ASSETS=${TWEET_ASSETS:-MU,PLTR,RKLB,SNDK,TSM,NVDA}
+      - TWEET_MIN_CONFIDENCE=${TWEET_MIN_CONFIDENCE:-0.75}
+      - TWEET_MIN_CONVICTION=${TWEET_MIN_CONVICTION:-medium}
+      - TWEET_MAX_AGE_MINUTES=${TWEET_MAX_AGE_MINUTES:-30}
+      - TWEET_ALLOW_SPECULATIVE=${TWEET_ALLOW_SPECULATIVE:-0}
+      - TWEET_DB_PATH=/data/concierge-tweets.sqlite
     volumes:
       # Persist state + journal across `docker compose down/up`.
       - concierge_data:/data
@@ -50,6 +81,9 @@ services:
         max-file: "3"
 
   freqtrade:
+    # OPTIONAL: research/backtesting only, not the signal source any more.
+    # Start it explicitly with `docker compose --profile freqtrade up -d`.
+    profiles: ["freqtrade"]
     # Pinned release — bump deliberately, with changelog review (Phase 4 rule).
     image: freqtradeorg/freqtrade:2025.12
     container_name: freqtrade

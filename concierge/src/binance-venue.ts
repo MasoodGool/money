@@ -62,6 +62,16 @@ export class CcxtBinanceVenue implements ExecutionVenue {
     };
   }
 
+  async getPrice(symbol: string): Promise<number> {
+    await this.ensureMarkets();
+    const ticker = await this.exchange.fetchTicker(symbol);
+    const price = ticker.last ?? ticker.close ?? ticker.bid;
+    if (price === undefined || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`no usable price for ${symbol}`);
+    }
+    return Number(price);
+  }
+
   async roundAmount(symbol: string, amount: number): Promise<number> {
     await this.ensureMarkets();
     return Number(this.exchange.amountToPrecision(symbol, amount));
