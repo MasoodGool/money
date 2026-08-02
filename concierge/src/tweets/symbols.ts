@@ -47,3 +47,54 @@ export function buildSymbolMap(bases: string[], quote = "USDT"): Record<string, 
 export function aliasesOf(symbolMap: Record<string, string>): string[] {
   return Object.keys(symbolMap);
 }
+
+// --- US equities ----------------------------------------------------------
+
+/**
+ * Company names that resolve to a ticker, so "Micron" and "$MU" both land on
+ * the same symbol.
+ *
+ * Careful with short tickers: an alias is matched on word boundaries, so a
+ * two- or three-letter ticker that is also an English word (ON, ALL, IT, SO)
+ * will match ordinary prose and hand the analyst a false candidate. Keep such
+ * tickers out of `TWEET_ASSETS` unless you have watched the classifier handle
+ * them in a backfill.
+ */
+export const EQUITY_ALIASES: Record<string, string[]> = {
+  MU: ["mu", "micron"],
+  PLTR: ["pltr", "palantir"],
+  RKLB: ["rklb", "rocket lab", "rocketlab"],
+  SNDK: ["sndk", "sandisk"],
+  TSM: ["tsm", "taiwan semi", "taiwan semiconductor", "tsmc"],
+  NVDA: ["nvda", "nvidia"],
+  AMD: ["amd"],
+  INTC: ["intc", "intel"],
+  AVGO: ["avgo", "broadcom"],
+  AAPL: ["aapl", "apple"],
+  MSFT: ["msft", "microsoft"],
+  TSLA: ["tsla", "tesla"],
+  AMZN: ["amzn", "amazon"],
+  GOOGL: ["googl", "goog", "alphabet"],
+  META: ["meta"],
+};
+
+/**
+ * Default equity allowlist: the names @TradexWhisperer's recent theses
+ * actually cover — memory and semis — rather than a generic mega-cap list.
+ */
+export const DEFAULT_EQUITY_ASSETS = ["MU", "PLTR", "RKLB", "SNDK", "TSM", "NVDA"];
+
+/**
+ * Build the alias -> ticker map for equities. Unlike crypto there is no quote
+ * pair: the symbol Alpaca wants is the bare ticker.
+ */
+export function buildEquitySymbolMap(tickers: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const raw of tickers) {
+    const ticker = raw.trim().toUpperCase().replace(/^\$/, "");
+    if (ticker === "") continue;
+    map[ticker.toLowerCase()] = ticker;
+    for (const alias of EQUITY_ALIASES[ticker] ?? []) map[alias] = ticker;
+  }
+  return map;
+}

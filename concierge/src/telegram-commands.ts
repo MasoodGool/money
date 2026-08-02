@@ -21,6 +21,8 @@ export interface CommandContext {
   executor: Executor;
   /** Whether orders go to testnet (for the status readout). */
   testnet: boolean;
+  /** Currency label for money in the readout. */
+  quoteCurrency?: string;
 }
 
 /**
@@ -54,16 +56,16 @@ export async function executeCommand(
         return "Usage: /equity <positive number>  e.g. /equity 25000";
       }
       ex.setEquity(value);
-      return `💰 Equity set to ${value} USDT. New sizing uses this immediately.`;
+      return `💰 Equity set to ${value} ${ctx.quoteCurrency ?? "USDT"}. New sizing uses this immediately.`;
     }
 
     case "risk": {
       const r = ex.getRiskConfig();
       const positions = ex.getOpenPositions();
       const lines = [
-        `Equity: ${ex.getEquity()} USDT`,
+        `Equity: ${ex.getEquity()} ${ctx.quoteCurrency ?? "USDT"}`,
         `Risk/trade: ${(r.riskPerTrade * 100).toFixed(2)}%  |  Max position: ${(r.maxPositionPct * 100).toFixed(0)}%`,
-        `Daily loss limit: ${(r.dailyLossLimit * 100).toFixed(0)}%  |  Remaining today: ${ex.remainingDailyBudget().toFixed(2)} USDT`,
+        `Daily loss limit: ${(r.dailyLossLimit * 100).toFixed(0)}%  |  Remaining today: ${ex.remainingDailyBudget().toFixed(2)} ${ctx.quoteCurrency ?? "USDT"}`,
         `Open positions: ${positions.length}`,
         ...positions.map((p) => `  • #${p.tradeId} ${p.symbol} ${p.amount} @ ${p.entryPrice}`),
       ];

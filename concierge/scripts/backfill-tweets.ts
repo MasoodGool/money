@@ -23,7 +23,7 @@ import { InMemoryStore } from "../src/store.js";
 import { ClaudeTweetAnalyzer } from "../src/tweets/analyzer.js";
 import { TweetPoller } from "../src/tweets/poller.js";
 import { TweetRouter } from "../src/tweets/router.js";
-import { aliasesOf, buildSymbolMap } from "../src/tweets/symbols.js";
+import { aliasesOf, buildEquitySymbolMap, buildSymbolMap } from "../src/tweets/symbols.js";
 import { SqliteTweetLog } from "../src/tweets/tweet-log.js";
 import { XApiTweetSource } from "../src/tweets/x-source.js";
 import type { ExecutionVenue, MarketFilters, OcoBracket, OrderReceipt } from "../src/venue.js";
@@ -86,7 +86,10 @@ async function main(): Promise<void> {
   }
 
   const days = argDays(config.tweets.backfillDays);
-  const symbols = buildSymbolMap(config.tweets.assets);
+  const symbols =
+    config.venue === "alpaca"
+      ? buildEquitySymbolMap(config.tweets.assets)
+      : buildSymbolMap(config.tweets.assets);
   const tweetLog = new SqliteTweetLog(config.tweets.tweetDbPath);
 
   const router = new TweetRouter({
@@ -130,7 +133,10 @@ async function main(): Promise<void> {
     pollSeconds: config.tweets.pollSeconds,
   });
 
-  console.log(`Backfilling @${config.tweets.handle}: last ${days} day(s), analysis only.`);
+  console.log(
+    `Backfilling @${config.tweets.handle}: last ${days} day(s), analysis only.\n` +
+      `Venue ${config.venue} · allowlist ${config.tweets.assets.join(", ")}`
+  );
   const summary = await poller.backfill(days);
 
   console.log("\n=== Backfill summary ===");

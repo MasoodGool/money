@@ -13,6 +13,8 @@
  *   4. quality       — confidence / conviction floors, speculation filter
  *   5. freshness     — a stale call is a dead call; never chase old tweets
  *   6. exposure      — at most one open position per symbol
+ *   7. market gate   — venue is open, and the trade would not break a
+ *                      regulatory limit (equities: hours + pattern-day-trader)
  *
  * Only then does the Executor see it, where the 1% sizing rule, the daily-loss
  * breaker, the kill switch and the OCO bracket still apply unchanged. This
@@ -25,6 +27,7 @@
 import type { Executor } from "../executor.js";
 import type { Notifier } from "../notifier.js";
 import type { StateStore } from "../store.js";
+import { AlwaysOpenGate, type MarketGate } from "./market-gate.js";
 import type {
   PriceSource,
   Tweet,
@@ -46,6 +49,8 @@ export interface TweetRouterConfig {
   maxTweetAgeMinutes: number;
   /** Act on speculative/predictive tweets. Off by default. */
   allowSpeculative: boolean;
+  /** Currency label for money in alerts. Defaults to USDT. */
+  quoteCurrency?: string;
 }
 
 export interface TweetRouterDeps {
@@ -56,6 +61,8 @@ export interface TweetRouterDeps {
   store: StateStore;
   tweetLog: TweetLog;
   config: TweetRouterConfig;
+  /** Venue-level gate (hours, PDT). Defaults to always-open, i.e. crypto. */
+  marketGate?: MarketGate;
   now?: () => Date;
 }
 
@@ -78,10 +85,14 @@ export function tradeIdFor(tweetId: string): string {
 export class TweetRouter {
   private readonly d: TweetRouterDeps;
   private readonly now: () => Date;
+  private readonly gate: MarketGate;
+  private readonly quote: string;
 
   constructor(deps: TweetRouterDeps) {
     this.d = deps;
     this.now = deps.now ?? (() => new Date());
+    this.gate = deps.marketGate ?? new AlwaysOpenGate();
+    this.quote = deps.config.quoteCurrency ?? "USDT";
   }
 
   /**
@@ -175,6 +186,10 @@ export class TweetRouter {
       if (mode === "paper") {
         return { action: "skipped", reason: `paper mode — would CLOSE ${symbol}` };
       }
+      const exitGate = await this.gateCheck("exit");
+      if (!exitGate.ok) {
+        return { action: "skipped", reason: exitGate.reason ?? "venue not accepting exits" };
+      }
       this.d.store.markHandled(seenKey(tweet.id));
       const outcome = await this.d.executor.handleExit({
         type: "exit",
@@ -182,12 +197,16 @@ export class TweetRouter {
         pair: symbol,
         rate: await this.priceOr(symbol, open.entryPrice),
       });
+      if (outcome.action === "closed") {
+        // Counts against the day-trade allowance only if it opened today.
+        this.gate.recordClose(open.openedAt, this.now());
+      }
       return outcome.action === "closed"
         ? {
             action: "exited",
             symbol,
             tradeId: open.tradeId,
-            detail: `realized ${outcome.realizedQuote.toFixed(2)} USDT`,
+            detail: `realized ${outcome.realizedQuote.toFixed(2)} ${this.quote}`,
           }
         : { action: "skipped", reason: outcome.reason };
     }
@@ -201,6 +220,13 @@ export class TweetRouter {
 
     if (mode === "paper") {
       return { action: "skipped", reason: `paper mode — would BUY ${symbol}` };
+    }
+
+    // Ask the venue before pricing: no point fetching a quote for a market
+    // that is shut, or a trade the account is not allowed to make.
+    const entryGate = await this.gateCheck("enter");
+    if (!entryGate.ok) {
+      return { action: "skipped", reason: entryGate.reason ?? "venue not accepting entries" };
     }
 
     // The tweet carries no price, so the entry is marked to the live market.
@@ -229,9 +255,22 @@ export class TweetRouter {
           action: "entered",
           symbol,
           tradeId,
-          detail: `${outcome.amount} @ ~${price} (${outcome.stakeQuote.toFixed(2)} USDT)`,
+          detail: `${outcome.amount} @ ~${price} (${outcome.stakeQuote.toFixed(2)} ${this.quote})`,
         }
       : { action: "skipped", reason: outcome.reason };
+  }
+
+  /**
+   * Ask the market gate whether this kind of trade is allowed right now.
+   * A gate that cannot be reached is treated as CLOSED — if we cannot
+   * confirm the venue is open and the account is clear, we do not trade.
+   */
+  private async gateCheck(kind: "enter" | "exit"): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      return kind === "enter" ? await this.gate.canEnter() : await this.gate.canExit();
+    } catch (err) {
+      return { ok: false, reason: `market gate unavailable: ${(err as Error).message}` };
+    }
   }
 
   /** Best-effort live price, falling back to a known reference on failure. */

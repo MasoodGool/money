@@ -1,12 +1,12 @@
 /**
- * Offline end-to-end demo of the tweet pipeline — no API keys, no exchange.
+ * Offline end-to-end demo of the tweet pipeline — no API keys, no broker.
  *
  *   npm run demo:tweets
  *
- * Runs a handful of representative tweets through the real TweetRouter and
- * the real Executor against an in-memory venue, so you can see exactly which
- * tweets become orders and which get filtered, and why. Useful for sanity-
- * checking gate settings before paying for X API access.
+ * Runs representative tweets — written in the style @TradexWhisperer actually
+ * posts, i.e. US equity calls — through the real TweetRouter, the real market
+ * gate and the real Executor against an in-memory venue. You see exactly which
+ * tweets become orders and which get filtered, and why.
  *
  * The analyst is a crude keyword stub here (the real one is Claude); with
  * ANTHROPIC_API_KEY set it uses the real analyst instead, which is the honest
@@ -17,17 +17,21 @@ import { Executor } from "../src/executor.js";
 import { LogNotifier } from "../src/notifier.js";
 import { InMemoryStore } from "../src/store.js";
 import { ClaudeTweetAnalyzer, inertAnalysis } from "../src/tweets/analyzer.js";
+import { DayTradeLedger } from "../src/tweets/day-trade-ledger.js";
+import { AlpacaMarketGate } from "../src/tweets/market-gate.js";
 import { TweetRouter } from "../src/tweets/router.js";
-import { aliasesOf, buildSymbolMap } from "../src/tweets/symbols.js";
+import { aliasesOf, buildEquitySymbolMap, DEFAULT_EQUITY_ASSETS } from "../src/tweets/symbols.js";
 import { NoopTweetLog } from "../src/tweets/types.js";
 import type { Tweet, TweetAnalysis, TweetAnalyzer } from "../src/tweets/types.js";
 import type { ExecutionVenue, MarketFilters, OcoBracket, OrderReceipt } from "../src/venue.js";
 
-const PRICES: Record<string, number> = { "BTC/USDT": 61000, "ETH/USDT": 3200, "SOL/USDT": 150 };
+/** Stand-in last-trade prices; the demo never touches a real market. */
+const PRICES: Record<string, number> = { MU: 62, PLTR: 21, RKLB: 10, SNDK: 214, NVDA: 178 };
 
 class DemoVenue implements ExecutionVenue {
+  // Equities: whole shares, one-cent tick, no exchange minimum notional.
   async getFilters(): Promise<MarketFilters> {
-    return { amountStep: 0.001, priceTick: 0.01, minNotional: 10 };
+    return { amountStep: 1, priceTick: 0.01, minNotional: undefined };
   }
   async getPrice(symbol: string): Promise<number> {
     const p = PRICES[symbol];
@@ -35,7 +39,7 @@ class DemoVenue implements ExecutionVenue {
     return p;
   }
   async roundAmount(_s: string, a: number): Promise<number> {
-    return Math.floor(a * 1000) / 1000;
+    return Math.floor(a);
   }
   async roundPrice(_s: string, p: number): Promise<number> {
     return Math.round(p * 100) / 100;
@@ -97,17 +101,17 @@ function tweet(id: string, text: string, minutesAgo = 1): Tweet {
 }
 
 const FIXTURES: Tweet[] = [
-  tweet("01", "gm everyone. market structure looking interesting into the weekend."),
-  tweet("02", "Longing $SOL here. Invalidation below the range low."),
-  tweet("03", "Longing $SOL again, adding to the position."),
-  tweet("04", "$PEPE about to send, don't say I didn't warn you."),
-  tweet("05", "BTC could run to 70k if this holds. Watching closely."),
-  tweet("06", "Taking profit, out of $SOL."),
-  tweet("07", "Bought $ETH at 3200, stop under 3050.", 240),
+  tweet("01", "Semiconductor export data out tomorrow. Should be informative."),
+  tweet("02", "Bargain thesis: buying $MU at 62. DRAM bit demand inflecting."),
+  tweet("03", "Buying more $MU here, adding to the position."),
+  tweet("04", "$GME about to squeeze again, you know what to do."),
+  tweet("05", "$NVDA could run to 250 if hyperscaler capex holds. Watching."),
+  tweet("06", "Taking profit, out of $MU."),
+  tweet("07", "Bought $PLTR at 21, stop under 19.", 240),
 ];
 
 async function main(): Promise<void> {
-  const symbols = buildSymbolMap(["BTC", "ETH", "SOL"]);
+  const symbols = buildEquitySymbolMap(DEFAULT_EQUITY_ASSETS);
   const aliases = aliasesOf(symbols);
   const key = process.env["ANTHROPIC_API_KEY"] ?? "";
   const analyzer: TweetAnalyzer = key
@@ -131,7 +135,24 @@ async function main(): Promise<void> {
     // Armed on purpose: the venue is in-memory, so nothing can reach an
     // exchange, and the point is to watch the risk gate actually fire.
     killSwitch: false,
+    quoteCurrency: "USD",
     store: new InMemoryStore(),
+  });
+
+  // The real Alpaca gate, fed a stubbed clock and account: open market,
+  // comfortable equity, so the demo exercises the gate without a broker.
+  const gateStore = new InMemoryStore();
+  const marketGate = new AlpacaMarketGate({
+    venue: {
+      getClock: async () => ({ isOpen: true, nextOpen: "", nextClose: "" }),
+      getAccount: async () => ({
+        equity: 50_000,
+        patternDayTrader: false,
+        tradingBlocked: false,
+        accountBlocked: false,
+      }),
+    },
+    ledger: new DayTradeLedger(gateStore),
   });
 
   const router = new TweetRouter({
@@ -141,17 +162,22 @@ async function main(): Promise<void> {
     notifier,
     store: new InMemoryStore(),
     tweetLog: new NoopTweetLog(),
+    marketGate,
     config: {
       symbols,
       minConfidence: 0.75,
       minConviction: "medium",
       maxTweetAgeMinutes: 30,
       allowSpeculative: false,
+      quoteCurrency: "USD",
     },
   });
 
   console.log(`Analyst: ${key ? "Claude (live)" : "keyword stub (set ANTHROPIC_API_KEY for the real one)"}`);
-  console.log(`Equity 10 000 USDT · 1% risk · 5% stop · allowlist BTC/ETH/SOL\n`);
+  console.log(
+    `Venue alpaca (simulated) · equity 10 000 USD · 1% risk · 5% stop\n` +
+      `Allowlist: ${DEFAULT_EQUITY_ASSETS.join(", ")} · market open, 50k equity (no PDT limit)\n`
+  );
 
   for (const t of FIXTURES) {
     const decision = await router.process(t);
@@ -165,7 +191,12 @@ async function main(): Promise<void> {
   console.log(
     open.length === 0
       ? "No open positions at the end of the run."
-      : `Open positions: ${open.map((p) => `${p.symbol} (${p.amount})`).join(", ")}`
+      : `Open positions: ${open.map((p) => `${p.symbol} (${p.amount} shares)`).join(", ")}`
+  );
+  console.log(
+    "\nLive, two more gates apply that this demo hard-codes as open: the market\n" +
+      "must be in session (US equities close overnight), and a sub-$25k account\n" +
+      "must have day-trade headroom under the pattern-day-trader rule."
   );
 }
 

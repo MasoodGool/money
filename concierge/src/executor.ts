@@ -48,6 +48,8 @@ export interface ExecutorDeps {
   risk: RiskConfig;
   /** Master cut-off. When true, no orders are placed. */
   killSwitch: boolean;
+  /** Currency label used in alerts. Defaults to USDT (crypto). */
+  quoteCurrency?: string;
   /** Durable state; defaults to in-memory (tests / no-persistence runs). */
   store?: StateStore;
   /** Execution journal; defaults to no-op. */
@@ -70,6 +72,7 @@ export class Executor {
   private readonly store: StateStore;
   private readonly journal: Journal;
   private readonly now: () => Date;
+  private readonly quote: string;
 
   // In-memory working copy, loaded from and written through to the store.
   private killSwitch: boolean;
@@ -85,6 +88,7 @@ export class Executor {
     this.store = deps.store ?? new InMemoryStore();
     this.journal = deps.journal ?? new NoopJournal();
     this.now = deps.now ?? (() => new Date());
+    this.quote = deps.quoteCurrency ?? "USDT";
 
     // Persisted settings win over config defaults so runtime changes survive
     // a restart; otherwise seed the store from config.
@@ -284,6 +288,7 @@ export class Executor {
       entryPrice: fillPrice,
       stopPrice: bracket.stopPrice,
       ocoOrderId: ocoId,
+      openedAt: this.now().toISOString(),
     };
     this.positions.set(tradeId, position);
     this.store.savePosition(position);
@@ -304,7 +309,7 @@ export class Executor {
 
     await this.notifier.notify(
       `🟢 AUTO-ENTRY #${tradeId} ${symbol}: bought ${buy.amount} @ ~${fillPrice} ` +
-        `(${sizing.stakeQuote.toFixed(2)} USDT${sizing.clampedToMaxPosition ? ", clamped" : ""}) ` +
+        `(${sizing.stakeQuote.toFixed(2)} ${this.quote}${sizing.clampedToMaxPosition ? ", clamped" : ""}) ` +
         `| stop ${bracket.stopPrice} TP ${bracket.takeProfitPrice}` +
         (ocoId ? ` | OCO ${ocoId}` : " | ⚠️ no bracket")
     );
@@ -354,7 +359,7 @@ export class Executor {
 
     await this.notifier.notify(
       `🔴 AUTO-EXIT #${tradeId} ${pos.symbol}: sold ${pos.amount} @ ~${sell.price ?? exitPrice} ` +
-        `| realized ${realizedQuote >= 0 ? "+" : ""}${realizedQuote.toFixed(2)} USDT`
+        `| realized ${realizedQuote >= 0 ? "+" : ""}${realizedQuote.toFixed(2)} ${this.quote}`
     );
     return { action: "closed", tradeId, realizedQuote };
   }

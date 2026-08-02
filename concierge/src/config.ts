@@ -1,15 +1,23 @@
 /**
  * Concierge runtime configuration, loaded from environment.
  *
- * AUTO-EXECUTION NOTE: as of the pivot to auto-execution, the Concierge —
- * not freqtrade — is what places real orders. freqtrade stays in dry-run and
- * only generates signals. The Binance key used here therefore needs TRADE
- * permission, but WITHDRAWAL MUST STAY DISABLED and the key must be
- * IP-restricted to this host. `binanceTestnet` defaults to true: real-money
- * mainnet is an explicit opt-in, gated behind strategy validation.
+ * The Concierge is what places real orders, driven by the tweet feed. Two
+ * venues are supported and selected with `VENUE`:
+ *
+ *   alpaca  — US equities (default). The account @TradexWhisperer calls
+ *             stocks, so this is the venue that can actually act on it.
+ *             `ALPACA_PAPER` defaults to true.
+ *   binance — crypto spot. `BINANCE_TESTNET` defaults to true, and the key
+ *             needs TRADE permission with WITHDRAWAL DISABLED, always,
+ *             IP-restricted to this host.
+ *
+ * Both default to their fake-money mode: real funds are an explicit opt-in.
  */
 
-import { DEFAULT_ASSETS } from "./tweets/symbols.js";
+import { DEFAULT_ASSETS, DEFAULT_EQUITY_ASSETS } from "./tweets/symbols.js";
+
+/** Which market the executor trades. */
+export type VenueKind = "alpaca" | "binance";
 
 export interface RiskConfig {
   /** Account equity in quote currency (USDT). Updated out-of-band. */
@@ -58,8 +66,24 @@ export interface TweetsConfig {
   tweetDbPath: string;
 }
 
+/** Alpaca (US equities) credentials and mode. */
+export interface AlpacaConfig {
+  apiKeyId: string;
+  apiSecretKey: string;
+  /** Paper trading (fake money, real API). Defaults to true. */
+  paper: boolean;
+  /** Day trades permitted below the equity floor. FINRA's limit is 3. */
+  dayTradeLimit: number;
+  /** Equity above which the pattern-day-trader rule stops applying. */
+  pdtEquityFloor: number;
+}
+
 export interface ConciergeConfig {
   port: number;
+  /** Which venue the executor trades on. */
+  venue: VenueKind;
+  /** Currency label for money in alerts — USD on equities, USDT on crypto. */
+  quoteCurrency: string;
   binanceApiKey: string;
   binanceApiSecret: string;
   /** When true, orders go to the Binance spot TESTNET (fake balances). */
@@ -82,6 +106,7 @@ export interface ConciergeConfig {
   sentryDsn: string;
   risk: RiskConfig;
   tweets: TweetsConfig;
+  alpaca: AlpacaConfig;
 }
 
 function num(name: string, fallback: number): number {
@@ -105,11 +130,22 @@ function conviction(name: string, fallback: "low" | "medium" | "high") {
   return raw === "low" || raw === "medium" || raw === "high" ? raw : fallback;
 }
 
-function loadTweetsConfig(env: NodeJS.ProcessEnv): TweetsConfig {
+function loadVenue(env: NodeJS.ProcessEnv): VenueKind {
+  const raw = (env["VENUE"] ?? "alpaca").trim().toLowerCase();
+  if (raw !== "alpaca" && raw !== "binance") {
+    throw new Error(`Env VENUE must be "alpaca" or "binance", got "${raw}"`);
+  }
+  return raw;
+}
+
+function loadTweetsConfig(env: NodeJS.ProcessEnv, venue: VenueKind): TweetsConfig {
   const handle = (env["TWEET_HANDLE"] ?? "TradexWhisperer").replace(/^@/, "").trim();
   const xBearerToken = env["X_BEARER_TOKEN"] ?? "";
   const anthropicApiKey = env["ANTHROPIC_API_KEY"] ?? "";
-  const assets = (env["TWEET_ASSETS"] ?? DEFAULT_ASSETS.join(","))
+  // The tradable universe depends on the venue: tickers on Alpaca, crypto
+  // pairs on Binance. Getting this wrong means every call is filtered out.
+  const defaultAssets = venue === "alpaca" ? DEFAULT_EQUITY_ASSETS : DEFAULT_ASSETS;
+  const assets = (env["TWEET_ASSETS"] ?? defaultAssets.join(","))
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s !== "");
@@ -138,8 +174,11 @@ function loadTweetsConfig(env: NodeJS.ProcessEnv): TweetsConfig {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConciergeConfig {
+  const venue = loadVenue(env);
   return {
     port: num("PORT", 3000),
+    venue,
+    quoteCurrency: env["QUOTE_CURRENCY"] ?? (venue === "alpaca" ? "USD" : "USDT"),
     binanceApiKey: env["BINANCE_API_KEY"] ?? "",
     binanceApiSecret: env["BINANCE_API_SECRET"] ?? "",
     // Mainnet is opt-in: only false when explicitly set falsey.
@@ -160,6 +199,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConciergeConfi
       stopLimitOffsetPct: num("RISK_STOP_LIMIT_OFFSET_PCT", 0.005),
       takeProfitPct: num("RISK_TAKE_PROFIT_PCT", 0.08),
     },
-    tweets: loadTweetsConfig(env),
+    tweets: loadTweetsConfig(env, venue),
+    alpaca: {
+      apiKeyId: env["ALPACA_API_KEY_ID"] ?? "",
+      apiSecretKey: env["ALPACA_API_SECRET_KEY"] ?? "",
+      // Paper is the default: real-money equities is an explicit opt-in, the
+      // same way BINANCE_TESTNET=1 is on the crypto path.
+      paper: bool("ALPACA_PAPER", true),
+      dayTradeLimit: num("ALPACA_DAY_TRADE_LIMIT", 3),
+      pdtEquityFloor: num("ALPACA_PDT_EQUITY_FLOOR", 25000),
+    },
   };
 }

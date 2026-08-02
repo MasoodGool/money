@@ -4,6 +4,7 @@ import type { RiskConfig } from "../src/config.js";
 import { Executor } from "../src/executor.js";
 import type { Notifier } from "../src/notifier.js";
 import { InMemoryStore } from "../src/store.js";
+import type { MarketGate } from "../src/tweets/market-gate.js";
 import { TweetRouter, tradeIdFor } from "../src/tweets/router.js";
 import { buildSymbolMap } from "../src/tweets/symbols.js";
 import { NoopTweetLog } from "../src/tweets/types.js";
@@ -91,17 +92,20 @@ function recordingLog(): TweetLog & { records: TweetLogRecord[] } {
 const prices: PriceSource = { getPrice: async () => 150 };
 
 /** Executor stub that records dispatches without touching a venue. */
-function stubExecutor(openPositions: Array<{ tradeId: string; symbol: string }> = []) {
+function stubExecutor(
+  openPositions: Array<{ tradeId: string; symbol: string; openedAt?: string }> = []
+) {
   const entries: Array<{ tradeId: string; pair: string; rate: number }> = [];
   const exits: Array<{ tradeId: string; pair: string }> = [];
   const stub = {
     getOpenPositions: () =>
       openPositions.map((p) => ({
-        ...p,
         amount: 1,
         entryPrice: 100,
         stopPrice: 95,
         ocoOrderId: "oco-1",
+        openedAt: p.openedAt ?? NOW.toISOString(),
+        ...p,
       })),
     handleEntry: vi.fn(async (s: { trade_id: string; pair: string; rate: number }) => {
       entries.push({ tradeId: s.trade_id, pair: s.pair, rate: s.rate });
@@ -117,10 +121,11 @@ function stubExecutor(openPositions: Array<{ tradeId: string; symbol: string }> 
 
 function makeRouter(opts: {
   analysis?: TweetAnalysis | Error;
-  open?: Array<{ tradeId: string; symbol: string }>;
+  open?: Array<{ tradeId: string; symbol: string; openedAt?: string }>;
   config?: Partial<typeof CONFIG>;
   store?: InMemoryStore;
   prices?: PriceSource;
+  marketGate?: MarketGate;
 }) {
   const { executor, entries, exits, raw } = stubExecutor(opts.open);
   const notifier = makeNotifier();
@@ -133,6 +138,7 @@ function makeRouter(opts: {
     notifier,
     store,
     tweetLog,
+    ...(opts.marketGate ? { marketGate: opts.marketGate } : {}),
     config: { ...CONFIG, ...opts.config },
     now: () => NOW,
   });
@@ -347,6 +353,86 @@ describe("TweetRouter — bookkeeping", () => {
       await router.process(tweet());
       expect(entries[0]?.pair, `asset ${asset}`).toBe("BTC/USDT");
     }
+  });
+});
+
+describe("TweetRouter — market gate", () => {
+  function gate(over: Partial<MarketGate> = {}): MarketGate & { closes: string[] } {
+    const closes: string[] = [];
+    return {
+      closes,
+      canEnter: async () => ({ ok: true }),
+      canExit: async () => ({ ok: true }),
+      recordClose: (openedAt) => void closes.push(openedAt ?? "none"),
+      ...over,
+    };
+  }
+
+  it("refuses an entry when the venue says it cannot trade", async () => {
+    const { router, entries } = makeRouter({
+      marketGate: gate({
+        canEnter: async () => ({ ok: false, reason: "market closed until 13:30Z" }),
+      }),
+    });
+
+    const decision = await router.process(tweet());
+
+    expect((decision as { reason: string }).reason).toBe("market closed until 13:30Z");
+    expect(entries).toHaveLength(0);
+  });
+
+  it("refuses an exit when the venue says it cannot trade", async () => {
+    const { router, exits } = makeRouter({
+      analysis: analysis({ action: "close" }),
+      open: [{ tradeId: "tw-42", symbol: "SOL/USDT" }],
+      marketGate: gate({ canExit: async () => ({ ok: false, reason: "market closed" }) }),
+    });
+
+    const decision = await router.process(tweet({ text: "out of SOL" }));
+
+    expect((decision as { reason: string }).reason).toBe("market closed");
+    expect(exits).toHaveLength(0);
+  });
+
+  it("treats an unreachable gate as closed rather than assuming open", async () => {
+    const { router, entries } = makeRouter({
+      marketGate: gate({
+        canEnter: async () => {
+          throw new Error("alpaca 503");
+        },
+      }),
+    });
+
+    const decision = await router.process(tweet());
+
+    expect((decision as { reason: string }).reason).toMatch(/market gate unavailable: alpaca 503/);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("reports a close so it can count against the day-trade allowance", async () => {
+    const g = gate();
+    const openedAt = "2026-08-02T09:30:00.000Z";
+    const { router } = makeRouter({
+      analysis: analysis({ action: "close" }),
+      open: [{ tradeId: "tw-42", symbol: "SOL/USDT", openedAt }],
+      marketGate: g,
+    });
+
+    await router.process(tweet({ text: "out of SOL" }));
+
+    expect(g.closes).toEqual([openedAt]);
+  });
+
+  it("does not consult the gate in paper mode", async () => {
+    // Paper is an offline analysis pass; it must not need broker access.
+    const g = gate({
+      canEnter: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const { router } = makeRouter({ marketGate: g });
+
+    expect((await router.process(tweet(), "paper")).action).toBe("skipped");
   });
 });
 

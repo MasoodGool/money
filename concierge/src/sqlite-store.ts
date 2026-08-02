@@ -21,11 +21,20 @@ export class SqliteStore implements StateStore {
         amount      REAL NOT NULL,
         entry_price REAL NOT NULL,
         stop_price  REAL NOT NULL,
-        oco_order_id TEXT
+        oco_order_id TEXT,
+        opened_at   TEXT
       );
       CREATE TABLE IF NOT EXISTS handled_entries (trade_id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
+    // Additive migration for databases created before opened_at existed.
+    // Positions written by an older build simply have no entry timestamp,
+    // and are treated as overnight holds (never counted as day trades).
+    try {
+      this.db.exec("ALTER TABLE positions ADD COLUMN opened_at TEXT");
+    } catch {
+      // Column already present.
+    }
   }
 
   loadPositions(): OpenPosition[] {
@@ -36,6 +45,7 @@ export class SqliteStore implements StateStore {
       entry_price: number;
       stop_price: number;
       oco_order_id: string | null;
+      opened_at: string | null;
     }>;
     return rows.map((r) => ({
       tradeId: r.trade_id,
@@ -44,20 +54,30 @@ export class SqliteStore implements StateStore {
       entryPrice: r.entry_price,
       stopPrice: r.stop_price,
       ocoOrderId: r.oco_order_id ?? undefined,
+      openedAt: r.opened_at ?? "",
     }));
   }
 
   savePosition(p: OpenPosition): void {
     this.db
       .prepare(
-        `INSERT INTO positions (trade_id, symbol, amount, entry_price, stop_price, oco_order_id)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO positions
+           (trade_id, symbol, amount, entry_price, stop_price, oco_order_id, opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(trade_id) DO UPDATE SET
            symbol=excluded.symbol, amount=excluded.amount,
            entry_price=excluded.entry_price, stop_price=excluded.stop_price,
-           oco_order_id=excluded.oco_order_id`
+           oco_order_id=excluded.oco_order_id, opened_at=excluded.opened_at`
       )
-      .run(p.tradeId, p.symbol, p.amount, p.entryPrice, p.stopPrice, p.ocoOrderId ?? null);
+      .run(
+        p.tradeId,
+        p.symbol,
+        p.amount,
+        p.entryPrice,
+        p.stopPrice,
+        p.ocoOrderId ?? null,
+        p.openedAt || null
+      );
   }
 
   deletePosition(tradeId: string): void {
