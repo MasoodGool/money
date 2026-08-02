@@ -8,6 +8,12 @@ import { captureException, initSentry } from "./sentry.js";
 import { SqliteStore } from "./sqlite-store.js";
 import { createTelegramTransport, TelegramNotifier } from "./telegram.js";
 import { TelegramCommandListener } from "./telegram-commands.js";
+import { ClaudeTweetAnalyzer } from "./tweets/analyzer.js";
+import { TweetPoller } from "./tweets/poller.js";
+import { TweetRouter } from "./tweets/router.js";
+import { aliasesOf, buildSymbolMap } from "./tweets/symbols.js";
+import { SqliteTweetLog } from "./tweets/tweet-log.js";
+import { XApiTweetSource } from "./tweets/x-source.js";
 
 const config = loadConfig();
 // Initialise Sentry before constructing or running anything it should watch.
@@ -61,6 +67,60 @@ if (telegramConfigured) {
   app.log.info("Telegram command listener started (/help for commands)");
 }
 
+// --- Tweet-driven signals (primary signal source) -------------------------
+// Every new tweet from the followed account is classified and, when it is a
+// clear call on an allowlisted asset, routed through the same risk gate as
+// any other signal. Historical tweets are NOT traded here — the backfill is
+// analysis-only (npm run backfill:tweets).
+let tweetPoller: TweetPoller | undefined;
+if (config.tweets.enabled) {
+  const symbols = buildSymbolMap(config.tweets.assets);
+  const tweetLog = new SqliteTweetLog(config.tweets.tweetDbPath);
+  const router = new TweetRouter({
+    executor,
+    analyzer: new ClaudeTweetAnalyzer({
+      apiKey: config.tweets.anthropicApiKey,
+      model: config.tweets.analystModel,
+      aliases: aliasesOf(symbols),
+    }),
+    prices: venue,
+    notifier,
+    store,
+    tweetLog,
+    config: {
+      symbols,
+      minConfidence: config.tweets.minConfidence,
+      minConviction: config.tweets.minConviction,
+      maxTweetAgeMinutes: config.tweets.maxTweetAgeMinutes,
+      allowSpeculative: config.tweets.allowSpeculative,
+    },
+  });
+  tweetPoller = new TweetPoller({
+    source: new XApiTweetSource({
+      handle: config.tweets.handle,
+      bearerToken: config.tweets.xBearerToken,
+    }),
+    router,
+    store,
+    notifier,
+    pollSeconds: config.tweets.pollSeconds,
+    log: (m) => app.log.info(m),
+  });
+  app.log.info(
+    {
+      handle: config.tweets.handle,
+      assets: config.tweets.assets,
+      pollSeconds: config.tweets.pollSeconds,
+      minConfidence: config.tweets.minConfidence,
+    },
+    `Tweet signals ON — following @${config.tweets.handle}`
+  );
+} else {
+  app.log.warn(
+    "Tweet signals OFF — set TWEET_HANDLE, X_BEARER_TOKEN and ANTHROPIC_API_KEY to enable"
+  );
+}
+
 // Loud, unmissable banner about the execution mode this process booted in.
 app.log.warn(
   {
@@ -89,6 +149,20 @@ app
         app.log.error(err, "boot reconciliation failed");
       }
     }
+    // Start the tweet feed only after reconciliation, so a signal can't land
+    // while the open-position view is still being squared. Priming the cursor
+    // first means the account's existing backlog is never read as live calls.
+    if (tweetPoller) {
+      try {
+        await tweetPoller.primeCursor();
+        tweetPoller.start();
+      } catch (err) {
+        app.log.error(err, "tweet poller failed to start");
+        await notifier
+          .notify(`⚠️ Tweet feed failed to start: ${(err as Error).message}`)
+          .catch(() => undefined);
+      }
+    }
   })
   .catch((err) => {
     app.log.error(err, "concierge failed to start");
@@ -97,6 +171,7 @@ app
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {
+    tweetPoller?.stop();
     await app.close();
     process.exit(0);
   });
